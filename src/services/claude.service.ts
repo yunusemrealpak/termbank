@@ -1,5 +1,4 @@
 import { spawn } from 'child_process';
-import path from 'path';
 import { Config } from '../utils/config.js';
 import { TermData, TermSummary } from '../utils/types.js';
 import { buildVaultContextBlock, VaultContext } from './vault.service.js';
@@ -234,6 +233,13 @@ ${systemPrompt}
   return parseVisualResponse(stdout);
 }
 
+// Properly quote a single argument for cmd.exe on Windows.
+// Wraps in double-quotes and escapes backslashes/quotes per Windows rules.
+function quoteWinArg(arg: string): string {
+  if (!/[ \t\n\v"\\]/.test(arg)) return arg;
+  return '"' + arg.replace(/(\\*)"/, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
 function spawnClaude(
   command: string,
   args: string[],
@@ -245,26 +251,16 @@ function spawnClaude(
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
-    // On Windows, .cmd files must run through cmd.exe /c to avoid both
-    // DEP0190 (shell:true + args array) and EINVAL (spawning .cmd directly).
-    // Each arg is passed as a separate element — Node.js/libuv handles quoting.
-    let spawnCmd: string;
-    let spawnArgs: string[];
+    // DEP0190: passing an args array to spawn with shell:true causes unsafe
+    // concatenation. Fix: on Windows, build the command string ourselves with
+    // proper quoting and pass an empty args array.
+    let proc;
     if (process.platform === 'win32') {
-      const resolved = path.isAbsolute(command) || command.endsWith('.cmd') || command.endsWith('.exe')
-        ? command
-        : `${command}.cmd`;
-      spawnCmd = 'cmd.exe';
-      spawnArgs = ['/c', resolved, ...args];
+      const fullCmd = [command, ...args].map(quoteWinArg).join(' ');
+      proc = spawn(fullCmd, [], { stdio: ['pipe', 'pipe', 'pipe'], env, shell: true });
     } else {
-      spawnCmd = command;
-      spawnArgs = args;
+      proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
     }
-
-    const proc = spawn(spawnCmd, spawnArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
-    });
 
     let stdout = '';
     let stderr = '';
