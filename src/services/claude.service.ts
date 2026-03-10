@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { Config } from '../utils/config.js';
 import { TermData, TermSummary } from '../utils/types.js';
 import { buildVaultContextBlock, VaultContext } from './vault.service.js';
@@ -188,15 +190,20 @@ ${systemPrompt}
   return parseNoteResponse(stdout);
 }
 
+const MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
 export async function queryClaudeCLIForVisual(
   title: string,
   vaultContext: string,
   config: Config,
   attachments: AttachedFile[],
 ): Promise<VisualResponse> {
-  const ctx = buildAttachmentContext(attachments);
-  const fileFlags = ctx.fileFlags;
-
   const systemPrompt = `Sen bir görsel analiz asistanısın. Verilen görseli analiz edip yapılandırılmış bir companion doküman oluştur.
 Dil: ${config.language}
 
@@ -216,21 +223,74 @@ Kurallar:
 - detectedConcepts: Görselde tespit edilen yazılım/teknik kavramlar
 - Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
 
-  const fullPrompt = `<system-instructions>
-${systemPrompt}
-</system-instructions>
+  // Build content blocks: one image block per attachment, then the text prompt.
+  // Use --input-format stream-json so Claude receives full Anthropic API message format
+  // (base64 image content blocks). This avoids --file which requires session tokens.
+  const imageBlocks = attachments
+    .filter(a => a.type === 'image')
+    .map(a => {
+      const ext = path.extname(a.absolutePath).toLowerCase();
+      const mediaType = MIME_TYPES[ext] ?? 'image/png';
+      const data = fs.readFileSync(a.absolutePath).toString('base64');
+      return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+    });
 
-"${title}" başlıklı görsel için analiz yap ve companion doküman oluştur.`;
+  const textBlock = {
+    type: 'text',
+    text: `"${title}" başlıklı görsel için analiz yap ve companion doküman oluştur.`,
+  };
+
+  // stream-json input: single line with user message event
+  const streamInput = JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [...imageBlocks, textBlock] },
+  });
 
   const args = [
     '--print',
     '--max-turns', String(config.maxTurns),
-    '--output-format', 'text',
-    ...fileFlags,
+    '--output-format', 'stream-json',
+    '--input-format', 'stream-json',
+    '--system-prompt', systemPrompt,
   ];
 
-  const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
-  return parseVisualResponse(stdout);
+  const stdout = await spawnClaude(config.claudePath, args, streamInput, config.timeout);
+  return parseVisualResponse(extractTextFromStreamJson(stdout));
+}
+
+function extractTextFromStreamJson(raw: string): string {
+  // stream-json output is newline-delimited JSON events.
+  // The final {"type":"result"} event contains the full response in "result".
+  for (const line of raw.split('\n').reverse()) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      if (event.type === 'result' && typeof event.result === 'string') {
+        return event.result;
+      }
+    } catch {
+      // skip non-JSON lines
+    }
+  }
+  // Fallback: collect all assistant text content blocks
+  const parts: string[] = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      if (event.type === 'assistant') {
+        const content = event.message?.content ?? [];
+        for (const block of content) {
+          if (block.type === 'text') parts.push(block.text);
+        }
+      }
+    } catch {
+      // skip
+    }
+  }
+  return parts.join('') || raw;
 }
 
 // Properly quote a single argument for cmd.exe on Windows.
