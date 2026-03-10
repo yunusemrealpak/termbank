@@ -1,0 +1,33 @@
+{
+  "name": "termbank",
+  "version": "0.1.0",
+  "description": "Terminal-based term bank CLI with Claude AI and Obsidian vault integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "termbank": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "cli",
+    "termbank",
+    "obsidian",
+    "claude",
+    "vocabulary"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "cosmiconfig": "^9.0.1",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "typescript": "^5.9.3"
+  }
+}
