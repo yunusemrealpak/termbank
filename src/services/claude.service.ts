@@ -234,16 +234,6 @@ ${systemPrompt}
   return parseVisualResponse(stdout);
 }
 
-function resolveCommand(command: string): string {
-  if (process.platform !== 'win32') return command;
-  // On Windows, global npm installs create .cmd wrappers.
-  // Appending .cmd avoids shell:true (which triggers DEP0190).
-  if (path.isAbsolute(command) || command.endsWith('.cmd') || command.endsWith('.exe')) {
-    return command;
-  }
-  return `${command}.cmd`;
-}
-
 function spawnClaude(
   command: string,
   args: string[],
@@ -255,7 +245,23 @@ function spawnClaude(
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
-    const proc = spawn(resolveCommand(command), args, {
+    // On Windows, .cmd files must run through cmd.exe /c to avoid both
+    // DEP0190 (shell:true + args array) and EINVAL (spawning .cmd directly).
+    // Each arg is passed as a separate element — Node.js/libuv handles quoting.
+    let spawnCmd: string;
+    let spawnArgs: string[];
+    if (process.platform === 'win32') {
+      const resolved = path.isAbsolute(command) || command.endsWith('.cmd') || command.endsWith('.exe')
+        ? command
+        : `${command}.cmd`;
+      spawnCmd = 'cmd.exe';
+      spawnArgs = ['/c', resolved, ...args];
+    } else {
+      spawnCmd = command;
+      spawnArgs = args;
+    }
+
+    const proc = spawn(spawnCmd, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
     });

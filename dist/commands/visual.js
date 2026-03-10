@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import path from 'path';
+import fs from 'fs';
+import readline from 'readline';
 import { loadConfig } from '../services/config.service.js';
 import { getVaultContext, visualExists, saveVisual, ensureVisualsDir, addRelation, buildVaultContextBlock, getAllSlugs, copyVisualFile, } from '../services/vault.service.js';
 import { queryClaudeCLIForVisual } from '../services/claude.service.js';
@@ -7,6 +9,45 @@ import { renderVisual } from '../templates/visual.template.js';
 import { slugify } from '../utils/slugify.js';
 import { Spinner } from '../utils/spinner.js';
 import { parseFileArgs } from '../utils/file-args.js';
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+function listImagesInCwd() {
+    return fs.readdirSync(process.cwd()).filter(f => {
+        const ext = path.extname(f).toLowerCase();
+        return IMAGE_EXTENSIONS.has(ext);
+    });
+}
+async function promptLine(question) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve => {
+        rl.question(question, answer => {
+            rl.close();
+            resolve(answer.trim());
+        });
+    });
+}
+async function pickImagesInteractively() {
+    const images = listImagesInCwd();
+    if (images.length === 0) {
+        console.log(chalk.yellow('Mevcut dizinde görsel dosyası bulunamadı.'));
+        console.log(chalk.dim('Görsel yolunu manuel girin veya komutu çalıştırdığınız dizinde görsel dosyaları olduğundan emin olun.'));
+        return [];
+    }
+    console.log(chalk.bold('\nMevcut dizindeki görseller:'));
+    images.forEach((img, i) => {
+        console.log(`  ${chalk.cyan(String(i + 1).padStart(2))}. @${img}`);
+    });
+    const input = await promptLine(chalk.bold('\nSeçim') + chalk.dim(' (virgülle ayırın, örn: 1,3): '));
+    if (!input)
+        return [];
+    const selected = [];
+    for (const part of input.split(',')) {
+        const n = parseInt(part.trim(), 10);
+        if (!isNaN(n) && n >= 1 && n <= images.length) {
+            selected.push(path.resolve(process.cwd(), images[n - 1]));
+        }
+    }
+    return selected;
+}
 export function registerVisualCommand(program) {
     program
         .command('visual')
@@ -30,15 +71,28 @@ export function registerVisualCommand(program) {
                 console.error(chalk.red(`Hata: ${err.message}`));
                 process.exit(1);
             }
-            const title = parsed.title;
+            let title = parsed.title;
             if (!title) {
-                console.error(chalk.red('Görsel başlığı gerekli. Örn: termbank visual "başlık" @image.png'));
-                process.exit(1);
+                title = await promptLine(chalk.bold('Başlık: '));
+                if (!title) {
+                    console.error(chalk.red('Başlık boş olamaz.'));
+                    process.exit(1);
+                }
             }
-            const attachments = parsed.files;
+            let attachments = parsed.files;
             if (attachments.length === 0) {
-                console.error(chalk.red('En az bir görsel dosyası gerekli. Örn: @image.png'));
-                process.exit(1);
+                // Interactive file picker
+                const selectedPaths = await pickImagesInteractively();
+                if (selectedPaths.length === 0) {
+                    console.error(chalk.red('En az bir görsel seçilmeli.'));
+                    process.exit(1);
+                }
+                attachments = selectedPaths.map(p => ({
+                    path: p,
+                    absolutePath: p,
+                    name: path.basename(p),
+                    type: 'image',
+                }));
             }
             // Warn about non-image files but continue
             const nonImages = attachments.filter(f => f.type !== 'image');
