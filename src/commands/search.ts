@@ -5,8 +5,11 @@ import path from 'path';
 import matter from 'gray-matter';
 import { loadConfig } from '../services/config.service.js';
 
+type ContentType = 'term' | 'note' | 'visual';
+
 interface SearchResult {
-  term: string;
+  name: string;
+  contentType: ContentType;
   category: string;
   snippet: string;
   matchedField: string;
@@ -15,8 +18,9 @@ interface SearchResult {
 export function registerSearchCommand(program: Command): void {
   program
     .command('search <keyword>')
-    .description("Vault'da terim ara")
-    .action(async (keyword: string) => {
+    .description("Vault'da tüm içerikleri ara (terms, notes, visuals)")
+    .option('--type <type>', 'İçerik türüne göre filtrele (term|note|visual)')
+    .action(async (keyword: string, options: { type?: string }) => {
       try {
         const config = await loadConfig();
         if (!config.vault) {
@@ -25,56 +29,46 @@ export function registerSearchCommand(program: Command): void {
           process.exit(1);
         }
 
-        const termsDir = path.join(config.vault, 'terms');
-        let files: string[];
-        try {
-          files = await fs.readdir(termsDir);
-        } catch {
-          console.log(chalk.yellow('Vault boş veya erişilemiyor.'));
-          return;
+        const typeFilter = options.type as ContentType | undefined;
+        if (typeFilter && !['term', 'note', 'visual'].includes(typeFilter)) {
+          console.error(chalk.red(`Geçersiz tür: "${typeFilter}". Geçerli değerler: term, note, visual`));
+          process.exit(1);
         }
 
-        const mdFiles = files.filter(f => f.endsWith('.md'));
-        const results: SearchResult[] = [];
         const regex = new RegExp(escapeRegex(keyword), 'gi');
+        const results: SearchResult[] = [];
 
-        for (const file of mdFiles) {
-          const content = await fs.readFile(path.join(termsDir, file), 'utf-8');
-          const { data, content: body } = matter(content);
-          const term = (data.term as string) || path.basename(file, '.md');
-          const category = (data.category as string) || '';
+        // Search terms
+        if (!typeFilter || typeFilter === 'term') {
+          const termResults = await searchInDir(
+            path.join(config.vault, 'terms'),
+            'term',
+            regex,
+            keyword,
+          );
+          results.push(...termResults);
+        }
 
-          // Check frontmatter fields first
-          const frontmatterText = [
-            term,
-            category,
-            Array.isArray(data.tags) ? (data.tags as string[]).join(' ') : '',
-            (data.summary as string) || '',
-          ].join(' ');
+        // Search notes
+        if (!typeFilter || typeFilter === 'note') {
+          const noteResults = await searchInDir(
+            path.join(config.vault, 'notes'),
+            'note',
+            regex,
+            keyword,
+          );
+          results.push(...noteResults);
+        }
 
-          if (regex.test(frontmatterText)) {
-            results.push({
-              term,
-              category,
-              snippet: (data.summary as string) || '',
-              matchedField: getMatchedFrontmatterField(keyword, data),
-            });
-            continue;
-          }
-
-          // Check body content line by line
-          const lines = body.split('\n');
-          for (const line of lines) {
-            if (regex.test(line)) {
-              results.push({
-                term,
-                category,
-                snippet: line.trim().slice(0, 100),
-                matchedField: 'içerik',
-              });
-              break;
-            }
-          }
+        // Search visuals
+        if (!typeFilter || typeFilter === 'visual') {
+          const visualResults = await searchInDir(
+            path.join(config.vault, 'visuals'),
+            'visual',
+            regex,
+            keyword,
+          );
+          results.push(...visualResults);
         }
 
         if (results.length === 0) {
@@ -84,8 +78,10 @@ export function registerSearchCommand(program: Command): void {
 
         console.log(chalk.bold(`\n${results.length} sonuç:\n`));
         for (const r of results) {
+          const typeLabel = chalk.dim(`[${r.contentType}]`);
+          const categoryLabel = r.category ? chalk.dim(`[${r.category}]`) : '';
           console.log(
-            `${chalk.cyan(r.term)}  ${chalk.dim(`[${r.category}]`)}  ${chalk.dim(`(${r.matchedField})`)}`,
+            `${chalk.cyan(r.name)}  ${typeLabel}  ${categoryLabel}  ${chalk.dim(`(${r.matchedField})`)}`,
           );
           if (r.snippet) {
             console.log(`  ${chalk.white(r.snippet)}`);
@@ -99,13 +95,89 @@ export function registerSearchCommand(program: Command): void {
     });
 }
 
+async function searchInDir(
+  dir: string,
+  contentType: ContentType,
+  regex: RegExp,
+  keyword: string,
+): Promise<SearchResult[]> {
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const mdFiles = files.filter(f => f.endsWith('.md'));
+  const results: SearchResult[] = [];
+
+  for (const file of mdFiles) {
+    const content = await fs.readFile(path.join(dir, file), 'utf-8');
+    const { data, content: body } = matter(content);
+
+    // Determine display name based on content type
+    let displayName: string;
+    if (contentType === 'term') {
+      displayName = (data.term as string) || path.basename(file, '.md');
+    } else {
+      displayName = (data.title as string) || path.basename(file, '.md');
+    }
+
+    const category = (data.category as string) || '';
+
+    // Check frontmatter fields first
+    const frontmatterText = [
+      displayName,
+      category,
+      Array.isArray(data.tags) ? (data.tags as string[]).join(' ') : '',
+      (data.summary as string) || '',
+    ].join(' ');
+
+    // Reset regex lastIndex before each use
+    regex.lastIndex = 0;
+    if (regex.test(frontmatterText)) {
+      results.push({
+        name: displayName,
+        contentType,
+        category,
+        snippet: (data.summary as string) || '',
+        matchedField: getMatchedFrontmatterField(keyword, data, contentType),
+      });
+      continue;
+    }
+
+    // Check body content line by line
+    const lines = body.split('\n');
+    for (const line of lines) {
+      regex.lastIndex = 0;
+      if (regex.test(line)) {
+        results.push({
+          name: displayName,
+          contentType,
+          category,
+          snippet: line.trim().slice(0, 100),
+          matchedField: 'içerik',
+        });
+        break;
+      }
+    }
+  }
+
+  return results;
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getMatchedFrontmatterField(keyword: string, data: Record<string, unknown>): string {
+function getMatchedFrontmatterField(
+  keyword: string,
+  data: Record<string, unknown>,
+  contentType: ContentType,
+): string {
   const re = new RegExp(escapeRegex(keyword), 'i');
-  if (re.test((data.term as string) || '')) return 'terim';
+  const nameField = contentType === 'term' ? 'term' : 'title';
+  if (re.test((data[nameField] as string) || '')) return contentType === 'term' ? 'terim' : 'başlık';
   if (re.test((data.summary as string) || '')) return 'özet';
   if (re.test((data.category as string) || '')) return 'kategori';
   if (Array.isArray(data.tags) && (data.tags as string[]).some(t => re.test(t))) return 'tags';

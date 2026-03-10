@@ -1,7 +1,11 @@
 import matter from 'gray-matter';
 import { TermData, TermSummary } from '../utils/types.js';
 
-export function renderTermMarkdown(termData: TermData, vaultTerms: TermSummary[]): string {
+export function renderTermMarkdown(
+  termData: TermData,
+  vaultTerms: TermSummary[],
+  attachmentSources?: string[],
+): string {
   const now = new Date().toISOString();
   const vaultTermNames = new Set(vaultTerms.map(t => t.term.toLowerCase()));
 
@@ -16,6 +20,10 @@ export function renderTermMarkdown(termData: TermData, vaultTerms: TermSummary[]
     confidence: 'learning',
     source: 'claude-cli',
   };
+
+  if (attachmentSources && attachmentSources.length > 0) {
+    frontmatter.sources = attachmentSources;
+  }
 
   const sections: string[] = [];
 
@@ -62,10 +70,14 @@ export function renderTermMarkdown(termData: TermData, vaultTerms: TermSummary[]
     sections.push('');
   }
 
-  // Sources
-  if (termData.sources.length > 0) {
+  // Sources (Claude-suggested + attachment files)
+  const allSources = [
+    ...termData.sources,
+    ...(attachmentSources || []),
+  ];
+  if (allSources.length > 0) {
     sections.push('## Kaynaklar\n');
-    termData.sources.forEach(s => sections.push(`- ${s}`));
+    allSources.forEach(s => sections.push(`- ${s}`));
     sections.push('');
   }
 

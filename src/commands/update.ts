@@ -42,9 +42,11 @@ export function registerUpdateCommand(program: Command): void {
         const createdAt = (parsed.data.created as string) || new Date().toISOString();
         const confidence = (parsed.data.confidence as string) || 'learning';
 
-        const vaultContext = config.vaultContext.enabled
+        const vaultCtx = config.vaultContext.enabled
           ? await getVaultContext(config.vault, config.vaultContext.maxTerms)
-          : [];
+          : { terms: [], notes: [], visuals: [] };
+
+        const vaultContext = vaultCtx.terms;
 
         const spinner = new Spinner(chalk.blue(`"${term}" güncelleniyor`));
         spinner.start();

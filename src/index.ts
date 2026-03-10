@@ -9,6 +9,8 @@ import { registerRelateCommand } from './commands/relate.js';
 import { registerUpdateCommand } from './commands/update.js';
 import { registerConfidenceCommand } from './commands/confidence.js';
 import { registerSyncCommand } from './commands/sync.js';
+import { registerNoteCommand } from './commands/note.js';
+import { registerVisualCommand } from './commands/visual.js';
 
 const program = new Command();
 
@@ -25,5 +27,7 @@ registerRelateCommand(program);
 registerUpdateCommand(program);
 registerConfidenceCommand(program);
 registerSyncCommand(program);
+registerNoteCommand(program);
+registerVisualCommand(program);
 
 program.parse();

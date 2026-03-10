@@ -1,8 +1,9 @@
 import { spawn } from 'child_process';
 import { buildVaultContextBlock } from './vault.service.js';
+import { buildAttachmentContext } from './attachment.service.js';
 export function buildSystemPrompt(config, vaultContext) {
     const vaultBlock = config.vaultContext.enabled
-        ? buildVaultContextBlock(vaultContext)
+        ? buildVaultContextBlock({ terms: vaultContext, notes: [], visuals: [] })
         : '';
     return `Sen bir terim uzmanısın. Terimler yazılım, bilim, felsefe, sanat veya herhangi bir alandan olabilir.
 Verilen terimi aşağıdaki JSON formatında açıkla.
@@ -27,9 +28,33 @@ Kurallar:
 - relatedTerms: Eğer vault'ta mevcut terimler verilmişse, SADECE o listedeki terimleri kullan. Listede yoksa boş bırak.
 - Sadece JSON döndür, başka bir şey yazma.${vaultBlock}`;
 }
-export async function queryClaudeCLIForUpdate(termName, existingContent, config, vaultContext) {
+export async function queryClaudeCLI(term, config, vaultContext, attachments) {
+    const systemPrompt = buildSystemPrompt(config, vaultContext);
+    let textBlocks = '';
+    let fileFlags = [];
+    if (attachments && attachments.length > 0) {
+        const ctx = buildAttachmentContext(attachments);
+        textBlocks = ctx.textBlocks;
+        fileFlags = ctx.fileFlags;
+    }
+    const attachmentSection = textBlocks ? `\n\nEklenen dosyalar:\n${textBlocks}` : '';
+    const fullPrompt = `<system-instructions>
+${systemPrompt}
+</system-instructions>${attachmentSection}
+
+"${term}" terimini açıkla.`;
+    const args = [
+        '--print',
+        '--max-turns', String(config.maxTurns),
+        '--output-format', 'text',
+        ...fileFlags,
+    ];
+    const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
+    return parseClaudeResponse(stdout);
+}
+export async function queryClaudeCLIForUpdate(termName, existingContent, config, vaultContext, attachments) {
     const vaultBlock = config.vaultContext.enabled
-        ? buildVaultContextBlock(vaultContext)
+        ? buildVaultContextBlock({ terms: vaultContext, notes: [], visuals: [] })
         : '';
     const systemPrompt = `Sen bir terim uzmanısın. Mevcut bir terim açıklamasını zenginleştirip güncelliyorsun.
 Dil: ${config.language}
@@ -53,33 +78,105 @@ Kurallar:
 - relatedTerms: Eğer vault'ta mevcut terimler verilmişse, SADECE o listedeki terimleri kullan.
 - Mevcut içeriği daha kapsamlı ve doğru hale getir, ancak term adını koru.
 - Sadece JSON döndür, başka bir şey yazma.${vaultBlock}`;
+    let textBlocks = '';
+    let fileFlags = [];
+    if (attachments && attachments.length > 0) {
+        const ctx = buildAttachmentContext(attachments);
+        textBlocks = ctx.textBlocks;
+        fileFlags = ctx.fileFlags;
+    }
+    const attachmentSection = textBlocks ? `\n\nEklenen dosyalar:\n${textBlocks}` : '';
     const fullPrompt = `<system-instructions>
 ${systemPrompt}
-</system-instructions>
+</system-instructions>${attachmentSection}
 
 Aşağıdaki mevcut terim açıklamasını zenginleştir ve güncelle:
 
 ${existingContent}`;
-    const args = ['--print', '--max-turns', String(config.maxTurns), '--output-format', 'text'];
-    const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
-    return parseClaudeResponse(stdout);
-}
-export async function queryClaudeCLI(term, config, vaultContext) {
-    const systemPrompt = buildSystemPrompt(config, vaultContext);
-    // Combine system instructions and user query into a single stdin prompt.
-    // This avoids Windows shell argument length limits that corrupt long --system-prompt values.
-    const fullPrompt = `<system-instructions>
-${systemPrompt}
-</system-instructions>
-
-"${term}" terimini açıkla.`;
     const args = [
         '--print',
         '--max-turns', String(config.maxTurns),
         '--output-format', 'text',
+        ...fileFlags,
     ];
     const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
     return parseClaudeResponse(stdout);
+}
+export async function queryClaudeCLIForNote(title, vaultContext, config, attachments) {
+    let textBlocks = '';
+    let fileFlags = [];
+    if (attachments && attachments.length > 0) {
+        const ctx = buildAttachmentContext(attachments);
+        textBlocks = ctx.textBlocks;
+        fileFlags = ctx.fileFlags;
+    }
+    const attachmentSection = textBlocks ? `\n\nEklenen dosyalar:\n${textBlocks}` : '';
+    const systemPrompt = `Sen bir teknik not asistanısın. Verilen başlık ve ek dosyalar hakkında yapılandırılmış bir geliştirici notu oluştur.
+Dil: ${config.language}
+
+JSON formatı:
+{
+  "title": "string",
+  "summary": "Tek cümlelik özet",
+  "tags": ["string"],
+  "content": "Detaylı içerik (markdown formatında, kod blokları dahil)",
+  "keyPoints": ["string"],
+  "relatedTerms": ["string"]
+}
+
+Kurallar:
+- Türkçe içerik üret
+- relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
+- content alanı markdown formatında olabilir (başlık, liste, kod bloğu vb.)
+- Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
+    const fullPrompt = `<system-instructions>
+${systemPrompt}
+</system-instructions>${attachmentSection}
+
+"${title}" başlıklı geliştirici notu oluştur.`;
+    const args = [
+        '--print',
+        '--max-turns', String(config.maxTurns),
+        '--output-format', 'text',
+        ...fileFlags,
+    ];
+    const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
+    return parseNoteResponse(stdout);
+}
+export async function queryClaudeCLIForVisual(title, vaultContext, config, attachments) {
+    const ctx = buildAttachmentContext(attachments);
+    const fileFlags = ctx.fileFlags;
+    const systemPrompt = `Sen bir görsel analiz asistanısın. Verilen görseli analiz edip yapılandırılmış bir companion doküman oluştur.
+Dil: ${config.language}
+
+JSON formatı:
+{
+  "title": "string",
+  "summary": "Tek cümlelik özet",
+  "tags": ["string"],
+  "analysis": "Görselin detaylı analizi (markdown formatında)",
+  "detectedConcepts": ["string"],
+  "relatedTerms": ["string"]
+}
+
+Kurallar:
+- Türkçe içerik üret
+- relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
+- detectedConcepts: Görselde tespit edilen yazılım/teknik kavramlar
+- Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
+    const fullPrompt = `<system-instructions>
+${systemPrompt}
+</system-instructions>
+
+"${title}" başlıklı görsel için analiz yap ve companion doküman oluştur.`;
+    const args = [
+        '--print',
+        '--max-turns', String(config.maxTurns),
+        '--output-format', 'text',
+        ...fileFlags,
+    ];
+    const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
+    return parseVisualResponse(stdout);
 }
 function spawnClaude(command, args, input, timeout) {
     return new Promise((resolve, reject) => {
@@ -157,6 +254,52 @@ function parseClaudeResponse(raw) {
             relatedTerms: Array.isArray(data.relatedTerms) ? data.relatedTerms : [],
             commonMistakes: Array.isArray(data.commonMistakes) ? data.commonMistakes : [],
             sources: Array.isArray(data.sources) ? data.sources : [],
+        };
+    }
+    catch (err) {
+        if (err instanceof SyntaxError) {
+            throw new Error(`Claude yanıtı geçerli JSON değil. Ham yanıt:\n${raw.slice(0, 500)}`);
+        }
+        throw err;
+    }
+}
+function parseNoteResponse(raw) {
+    const jsonStr = extractJSON(raw);
+    try {
+        const data = JSON.parse(jsonStr);
+        if (!data.title || typeof data.title !== 'string') {
+            throw new Error('JSON yanıtında "title" alanı eksik veya geçersiz');
+        }
+        return {
+            title: data.title,
+            summary: data.summary || '',
+            tags: Array.isArray(data.tags) ? data.tags : [],
+            content: data.content || '',
+            keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints : [],
+            relatedTerms: Array.isArray(data.relatedTerms) ? data.relatedTerms : [],
+        };
+    }
+    catch (err) {
+        if (err instanceof SyntaxError) {
+            throw new Error(`Claude yanıtı geçerli JSON değil. Ham yanıt:\n${raw.slice(0, 500)}`);
+        }
+        throw err;
+    }
+}
+function parseVisualResponse(raw) {
+    const jsonStr = extractJSON(raw);
+    try {
+        const data = JSON.parse(jsonStr);
+        if (!data.title || typeof data.title !== 'string') {
+            throw new Error('JSON yanıtında "title" alanı eksik veya geçersiz');
+        }
+        return {
+            title: data.title,
+            summary: data.summary || '',
+            tags: Array.isArray(data.tags) ? data.tags : [],
+            analysis: data.analysis || '',
+            detectedConcepts: Array.isArray(data.detectedConcepts) ? data.detectedConcepts : [],
+            relatedTerms: Array.isArray(data.relatedTerms) ? data.relatedTerms : [],
         };
     }
     catch (err) {

@@ -30,9 +30,10 @@ export function registerUpdateCommand(program) {
             const parsed = matter(existingContent);
             const createdAt = parsed.data.created || new Date().toISOString();
             const confidence = parsed.data.confidence || 'learning';
-            const vaultContext = config.vaultContext.enabled
+            const vaultCtx = config.vaultContext.enabled
                 ? await getVaultContext(config.vault, config.vaultContext.maxTerms)
-                : [];
+                : { terms: [], notes: [], visuals: [] };
+            const vaultContext = vaultCtx.terms;
             const spinner = new Spinner(chalk.blue(`"${term}" güncelleniyor`));
             spinner.start();
             let updatedData;

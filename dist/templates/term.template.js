@@ -1,5 +1,5 @@
 import matter from 'gray-matter';
-export function renderTermMarkdown(termData, vaultTerms) {
+export function renderTermMarkdown(termData, vaultTerms, attachmentSources) {
     const now = new Date().toISOString();
     const vaultTermNames = new Set(vaultTerms.map(t => t.term.toLowerCase()));
     const frontmatter = {
@@ -13,6 +13,9 @@ export function renderTermMarkdown(termData, vaultTerms) {
         confidence: 'learning',
         source: 'claude-cli',
     };
+    if (attachmentSources && attachmentSources.length > 0) {
+        frontmatter.sources = attachmentSources;
+    }
     const sections = [];
     // Title
     sections.push(`# ${termData.term}\n`);
@@ -50,10 +53,14 @@ export function renderTermMarkdown(termData, vaultTerms) {
         });
         sections.push('');
     }
-    // Sources
-    if (termData.sources.length > 0) {
+    // Sources (Claude-suggested + attachment files)
+    const allSources = [
+        ...termData.sources,
+        ...(attachmentSources || []),
+    ];
+    if (allSources.length > 0) {
         sections.push('## Kaynaklar\n');
-        termData.sources.forEach(s => sections.push(`- ${s}`));
+        allSources.forEach(s => sections.push(`- ${s}`));
         sections.push('');
     }
     const body = sections.join('\n');

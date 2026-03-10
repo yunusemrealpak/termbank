@@ -1,5 +1,10 @@
 import { Config } from '../utils/config.js';
 import { TermData, TermSummary } from '../utils/types.js';
+import { AttachedFile } from '../utils/file-args.js';
+import { NoteResponse } from '../templates/note.template.js';
+import { VisualResponse } from '../templates/visual.template.js';
 export declare function buildSystemPrompt(config: Config, vaultContext: TermSummary[]): string;
-export declare function queryClaudeCLIForUpdate(termName: string, existingContent: string, config: Config, vaultContext: TermSummary[]): Promise<TermData>;
-export declare function queryClaudeCLI(term: string, config: Config, vaultContext: TermSummary[]): Promise<TermData>;
+export declare function queryClaudeCLI(term: string, config: Config, vaultContext: TermSummary[], attachments?: AttachedFile[]): Promise<TermData>;
+export declare function queryClaudeCLIForUpdate(termName: string, existingContent: string, config: Config, vaultContext: TermSummary[], attachments?: AttachedFile[]): Promise<TermData>;
+export declare function queryClaudeCLIForNote(title: string, vaultContext: string, config: Config, attachments?: AttachedFile[]): Promise<NoteResponse>;
+export declare function queryClaudeCLIForVisual(title: string, vaultContext: string, config: Config, attachments: AttachedFile[]): Promise<VisualResponse>;

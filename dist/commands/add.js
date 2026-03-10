@@ -7,12 +7,14 @@ import { syncVault } from '../services/git.service.js';
 import { renderTermMarkdown } from '../templates/term.template.js';
 import { safeFilename } from '../utils/slugify.js';
 import { Spinner } from '../utils/spinner.js';
+import { parseFileArgs } from '../utils/file-args.js';
 export function registerAddCommand(program) {
     program
-        .command('add [term]')
-        .description('Yeni terim ekle (argümansız = interaktif mod)')
+        .command('add')
+        .argument('[args...]', 'Terim adı ve/veya @dosya referansları')
+        .description('Yeni terim ekle (argümansız = interaktif mod). Örn: termbank add "terim" @file.pdf')
         .option('-f, --force', 'Mevcut terimin üzerine yaz')
-        .action(async (termArg, options) => {
+        .action(async (args, options) => {
         try {
             const config = await loadConfig();
             if (!config.vault) {
@@ -20,8 +22,17 @@ export function registerAddCommand(program) {
                 console.error(chalk.yellow('  termbank config set vault <path>'));
                 process.exit(1);
             }
+            // Parse @ file args and extract term
+            let parsed;
+            try {
+                parsed = parseFileArgs(args);
+            }
+            catch (err) {
+                console.error(chalk.red(`Hata: ${err.message}`));
+                process.exit(1);
+            }
             // Interactive mode: prompt if no term argument given
-            let term = termArg;
+            let term = parsed.title;
             if (!term) {
                 term = await promptForTerm();
                 if (!term) {
@@ -29,6 +40,7 @@ export function registerAddCommand(program) {
                     process.exit(1);
                 }
             }
+            const attachments = parsed.files;
             // Duplicate check — case-insensitive, by display name
             if (!options.force && (await termExists(config.vault, term))) {
                 console.error(chalk.yellow(`"${term}" zaten mevcut.`));
@@ -37,26 +49,32 @@ export function registerAddCommand(program) {
                 process.exit(1);
             }
             await ensureVaultDir(config.vault);
-            const vaultContext = config.vaultContext.enabled
+            const vaultCtx = config.vaultContext.enabled
                 ? await getVaultContext(config.vault, config.vaultContext.maxTerms)
-                : [];
+                : { terms: [], notes: [], visuals: [] };
+            const vaultContext = vaultCtx.terms;
             if (vaultContext.length > 0) {
                 console.log(chalk.dim(`  vault context: ${vaultContext.length} mevcut terim`));
+            }
+            if (attachments.length > 0) {
+                console.log(chalk.dim(`  eklenen dosyalar: ${attachments.map(f => f.name).join(', ')}`));
             }
             const spinner = new Spinner(chalk.blue(`"${term}" için Claude ile analiz ediliyor`));
             spinner.start();
             let termData;
             try {
-                termData = await queryClaudeCLI(term, config, vaultContext);
+                termData = await queryClaudeCLI(term, config, vaultContext, attachments.length > 0 ? attachments : undefined);
                 spinner.stop(chalk.green('✓ Claude yanıtı alındı'));
             }
             catch (err) {
                 spinner.stop();
                 throw err;
             }
+            // Attachment file names to add as sources
+            const attachmentSources = attachments.map(f => f.name);
             // Use Claude's returned display name as filename (preserves casing + spaces)
             const fileName = safeFilename(termData.term);
-            const markdown = renderTermMarkdown(termData, vaultContext);
+            const markdown = renderTermMarkdown(termData, vaultContext, attachmentSources.length > 0 ? attachmentSources : undefined);
             const filePath = await saveTerm(config.vault, fileName, markdown);
             console.log(chalk.green(`\n✓ terms/${fileName}.md oluşturuldu`));
             console.log(chalk.dim(`  Dosya: ${filePath}`));

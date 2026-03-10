@@ -1,20 +1,57 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
 import { TermSummary } from '../utils/types.js';
 import { slugify } from '../utils/slugify.js';
+
+export interface NoteSummary {
+  slug: string;
+  title: string;
+  summary: string;
+  tags: string[];
+}
+
+export interface VisualSummary {
+  slug: string;
+  title: string;
+  summary: string;
+  tags: string[];
+}
+
+export interface VaultContext {
+  terms: TermSummary[];
+  notes: NoteSummary[];
+  visuals: VisualSummary[];
+}
 
 export async function ensureVaultDir(vaultPath: string): Promise<void> {
   const termsDir = path.join(vaultPath, 'terms');
   await fs.mkdir(termsDir, { recursive: true });
 }
 
+export async function ensureNotesDir(vaultPath: string): Promise<void> {
+  const notesDir = path.join(vaultPath, 'notes');
+  await fs.mkdir(notesDir, { recursive: true });
+}
+
+export async function ensureVisualsDir(vaultPath: string): Promise<void> {
+  const visualsDir = path.join(vaultPath, 'visuals');
+  await fs.mkdir(visualsDir, { recursive: true });
+}
+
 export async function getVaultContext(
   vaultPath: string,
   maxTerms: number = 50,
-): Promise<TermSummary[]> {
-  const termsDir = path.join(vaultPath, 'terms');
+): Promise<VaultContext> {
+  const terms = await readTermSummaries(vaultPath, maxTerms);
+  const notes = await readNoteSummaries(vaultPath, maxTerms);
+  const visuals = await readVisualSummaries(vaultPath, maxTerms);
+  return { terms, notes, visuals };
+}
 
+async function readTermSummaries(vaultPath: string, maxTerms: number): Promise<TermSummary[]> {
+  const termsDir = path.join(vaultPath, 'terms');
   let files: string[];
   try {
     files = await fs.readdir(termsDir);
@@ -45,14 +82,112 @@ export async function getVaultContext(
   return terms;
 }
 
-export function buildVaultContextBlock(terms: TermSummary[]): string {
-  if (terms.length === 0) return '';
+async function readNoteSummaries(vaultPath: string, maxItems: number): Promise<NoteSummary[]> {
+  const notesDir = path.join(vaultPath, 'notes');
+  let files: string[];
+  try {
+    files = await fs.readdir(notesDir);
+  } catch {
+    return [];
+  }
 
-  const list = terms
-    .map(t => `- ${t.term} [${t.category}] (tags: ${t.tags.join(', ')}) → ${t.summary}`)
-    .join('\n');
+  const mdFiles = files.filter(f => f.endsWith('.md')).slice(0, maxItems);
+  const notes: NoteSummary[] = [];
 
-  return `\n\nVault'ta şu anda kayıtlı terimler:\n${list}\n\nYeni terimin relatedTerms alanında SADECE bu listedeki terimleri kullan. Listede olmayan terim önerme.`;
+  for (const file of mdFiles) {
+    try {
+      const content = await fs.readFile(path.join(notesDir, file), 'utf-8');
+      const { data } = matter(content);
+
+      notes.push({
+        slug: path.basename(file, '.md'),
+        title: (data.title as string) || path.basename(file, '.md'),
+        summary: (data.summary as string) || '',
+        tags: (data.tags as string[]) || [],
+      });
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  return notes;
+}
+
+async function readVisualSummaries(vaultPath: string, maxItems: number): Promise<VisualSummary[]> {
+  const visualsDir = path.join(vaultPath, 'visuals');
+  let files: string[];
+  try {
+    files = await fs.readdir(visualsDir);
+  } catch {
+    return [];
+  }
+
+  const mdFiles = files.filter(f => f.endsWith('.md')).slice(0, maxItems);
+  const visuals: VisualSummary[] = [];
+
+  for (const file of mdFiles) {
+    try {
+      const content = await fs.readFile(path.join(visualsDir, file), 'utf-8');
+      const { data } = matter(content);
+
+      visuals.push({
+        slug: path.basename(file, '.md'),
+        title: (data.title as string) || path.basename(file, '.md'),
+        summary: (data.summary as string) || '',
+        tags: (data.tags as string[]) || [],
+      });
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  return visuals;
+}
+
+export function buildVaultContextBlock(context: VaultContext): string {
+  const parts: string[] = [];
+
+  if (context.terms.length > 0) {
+    const list = context.terms
+      .map(t => `- slug: "${slugify(t.term)}", term: "${t.term}", summary: "${t.summary}"`)
+      .join('\n');
+    parts.push(`=== TERMS ===\n${list}`);
+  }
+
+  if (context.notes.length > 0) {
+    const list = context.notes
+      .map(n => `- slug: "${n.slug}", title: "${n.title}", summary: "${n.summary}"`)
+      .join('\n');
+    parts.push(`=== NOTES ===\n${list}`);
+  }
+
+  if (context.visuals.length > 0) {
+    const list = context.visuals
+      .map(v => `- slug: "${v.slug}", title: "${v.title}", summary: "${v.summary}"`)
+      .join('\n');
+    parts.push(`=== VISUALS ===\n${list}`);
+  }
+
+  if (parts.length === 0) return '';
+
+  return `\n\nVault'ta şu anda kayıtlı içerikler:\n${parts.join('\n\n')}\n\nYeni içeriğin relatedTerms alanında SADECE bu listedeki slug veya terim adlarını kullan.`;
+}
+
+/**
+ * Builds a simple string context block (for use in claude service prompts).
+ */
+export function buildVaultContextString(context: VaultContext): string {
+  return buildVaultContextBlock(context);
+}
+
+/**
+ * Returns all slugs across all content types for relation checks.
+ */
+export function getAllSlugs(context: VaultContext): string[] {
+  const termSlugs = context.terms.map(t => slugify(t.term));
+  const noteSlugs = context.notes.map(n => n.slug);
+  const visualSlugs = context.visuals.map(v => v.slug);
+  return [...termSlugs, ...noteSlugs, ...visualSlugs];
 }
 
 /**
@@ -102,19 +237,107 @@ export async function readTerm(vaultPath: string, searchTerm: string): Promise<s
   return fs.readFile(path.join(vaultPath, 'terms', `${fileName}.md`), 'utf-8');
 }
 
+export async function noteExists(vaultPath: string, slug: string): Promise<boolean> {
+  const filePath = path.join(vaultPath, 'notes', `${slug}.md`);
+  return fsSync.existsSync(filePath);
+}
+
+export async function saveNote(vaultPath: string, slug: string, content: string): Promise<string> {
+  await ensureNotesDir(vaultPath);
+  const filePath = path.join(vaultPath, 'notes', `${slug}.md`);
+  await fs.writeFile(filePath, content, 'utf-8');
+  return filePath;
+}
+
+export async function readNote(vaultPath: string, slug: string): Promise<string> {
+  const filePath = path.join(vaultPath, 'notes', `${slug}.md`);
+  return fs.readFile(filePath, 'utf-8');
+}
+
+export async function visualExists(vaultPath: string, slug: string): Promise<boolean> {
+  const filePath = path.join(vaultPath, 'visuals', `${slug}.md`);
+  return fsSync.existsSync(filePath);
+}
+
+export async function saveVisual(vaultPath: string, slug: string, content: string): Promise<string> {
+  await ensureVisualsDir(vaultPath);
+  const filePath = path.join(vaultPath, 'visuals', `${slug}.md`);
+  await fs.writeFile(filePath, content, 'utf-8');
+  return filePath;
+}
+
 /**
- * Adds a [[wiki-link]] entry to a term file (both frontmatter and body section).
+ * Copies a visual file to the visuals directory with conflict handling.
+ * Returns the filename used in the destination (may differ if there was a collision).
+ */
+export async function copyVisualFile(sourcePath: string, destDir: string): Promise<string> {
+  await fs.mkdir(destDir, { recursive: true });
+
+  const origName = path.basename(sourcePath);
+  const ext = path.extname(origName);
+  const base = path.basename(origName, ext);
+
+  let destName = origName;
+  let destPath = path.join(destDir, destName);
+  let counter = 2;
+
+  while (fsSync.existsSync(destPath)) {
+    destName = `${base}-${counter}${ext}`;
+    destPath = path.join(destDir, destName);
+    counter++;
+  }
+
+  await fs.copyFile(sourcePath, destPath);
+  return destName;
+}
+
+/**
+ * Adds a [[wiki-link]] entry to a content file (both frontmatter and body section).
+ * Searches terms/, notes/, visuals/ in order.
  * Returns true if added, false if already existed or file not found.
  */
 export async function addRelation(
   vaultPath: string,
-  termSearchName: string,
-  relatedTermName: string,
+  targetSlugOrName: string,
+  relatedDisplayName: string,
 ): Promise<boolean> {
-  const fileName = await findTermFile(vaultPath, termSearchName);
-  if (!fileName) return false;
+  // Search in terms/ first
+  const termFileName = await findTermFile(vaultPath, targetSlugOrName);
+  if (termFileName) {
+    const filePath = path.join(vaultPath, 'terms', `${termFileName}.md`);
+    return addRelationToFile(filePath, relatedDisplayName);
+  }
 
-  const filePath = path.join(vaultPath, 'terms', `${fileName}.md`);
+  // Search in notes/
+  const noteSlug = slugify(targetSlugOrName);
+  const notePath = path.join(vaultPath, 'notes', `${noteSlug}.md`);
+  if (fsSync.existsSync(notePath)) {
+    return addRelationToFile(notePath, relatedDisplayName);
+  }
+
+  // Also try exact match for notes
+  const notePathExact = path.join(vaultPath, 'notes', `${targetSlugOrName}.md`);
+  if (fsSync.existsSync(notePathExact)) {
+    return addRelationToFile(notePathExact, relatedDisplayName);
+  }
+
+  // Search in visuals/
+  const visualSlug = slugify(targetSlugOrName);
+  const visualPath = path.join(vaultPath, 'visuals', `${visualSlug}.md`);
+  if (fsSync.existsSync(visualPath)) {
+    return addRelationToFile(visualPath, relatedDisplayName);
+  }
+
+  // Also try exact match for visuals
+  const visualPathExact = path.join(vaultPath, 'visuals', `${targetSlugOrName}.md`);
+  if (fsSync.existsSync(visualPathExact)) {
+    return addRelationToFile(visualPathExact, relatedDisplayName);
+  }
+
+  return false;
+}
+
+async function addRelationToFile(filePath: string, relatedTermName: string): Promise<boolean> {
   const rawContent = await fs.readFile(filePath, 'utf-8');
   const parsed = matter(rawContent);
   const relatedTerms: string[] = Array.isArray(parsed.data.relatedTerms)

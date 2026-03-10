@@ -6,8 +6,9 @@ import { loadConfig } from '../services/config.service.js';
 export function registerSearchCommand(program) {
     program
         .command('search <keyword>')
-        .description("Vault'da terim ara")
-        .action(async (keyword) => {
+        .description("Vault'da tüm içerikleri ara (terms, notes, visuals)")
+        .option('--type <type>', 'İçerik türüne göre filtrele (term|note|visual)')
+        .action(async (keyword, options) => {
         try {
             const config = await loadConfig();
             if (!config.vault) {
@@ -15,52 +16,27 @@ export function registerSearchCommand(program) {
                 console.error(chalk.yellow('  termbank config set vault <path>'));
                 process.exit(1);
             }
-            const termsDir = path.join(config.vault, 'terms');
-            let files;
-            try {
-                files = await fs.readdir(termsDir);
+            const typeFilter = options.type;
+            if (typeFilter && !['term', 'note', 'visual'].includes(typeFilter)) {
+                console.error(chalk.red(`Geçersiz tür: "${typeFilter}". Geçerli değerler: term, note, visual`));
+                process.exit(1);
             }
-            catch {
-                console.log(chalk.yellow('Vault boş veya erişilemiyor.'));
-                return;
-            }
-            const mdFiles = files.filter(f => f.endsWith('.md'));
-            const results = [];
             const regex = new RegExp(escapeRegex(keyword), 'gi');
-            for (const file of mdFiles) {
-                const content = await fs.readFile(path.join(termsDir, file), 'utf-8');
-                const { data, content: body } = matter(content);
-                const term = data.term || path.basename(file, '.md');
-                const category = data.category || '';
-                // Check frontmatter fields first
-                const frontmatterText = [
-                    term,
-                    category,
-                    Array.isArray(data.tags) ? data.tags.join(' ') : '',
-                    data.summary || '',
-                ].join(' ');
-                if (regex.test(frontmatterText)) {
-                    results.push({
-                        term,
-                        category,
-                        snippet: data.summary || '',
-                        matchedField: getMatchedFrontmatterField(keyword, data),
-                    });
-                    continue;
-                }
-                // Check body content line by line
-                const lines = body.split('\n');
-                for (const line of lines) {
-                    if (regex.test(line)) {
-                        results.push({
-                            term,
-                            category,
-                            snippet: line.trim().slice(0, 100),
-                            matchedField: 'içerik',
-                        });
-                        break;
-                    }
-                }
+            const results = [];
+            // Search terms
+            if (!typeFilter || typeFilter === 'term') {
+                const termResults = await searchInDir(path.join(config.vault, 'terms'), 'term', regex, keyword);
+                results.push(...termResults);
+            }
+            // Search notes
+            if (!typeFilter || typeFilter === 'note') {
+                const noteResults = await searchInDir(path.join(config.vault, 'notes'), 'note', regex, keyword);
+                results.push(...noteResults);
+            }
+            // Search visuals
+            if (!typeFilter || typeFilter === 'visual') {
+                const visualResults = await searchInDir(path.join(config.vault, 'visuals'), 'visual', regex, keyword);
+                results.push(...visualResults);
             }
             if (results.length === 0) {
                 console.log(chalk.yellow(`"${keyword}" için sonuç bulunamadı.`));
@@ -68,7 +44,9 @@ export function registerSearchCommand(program) {
             }
             console.log(chalk.bold(`\n${results.length} sonuç:\n`));
             for (const r of results) {
-                console.log(`${chalk.cyan(r.term)}  ${chalk.dim(`[${r.category}]`)}  ${chalk.dim(`(${r.matchedField})`)}`);
+                const typeLabel = chalk.dim(`[${r.contentType}]`);
+                const categoryLabel = r.category ? chalk.dim(`[${r.category}]`) : '';
+                console.log(`${chalk.cyan(r.name)}  ${typeLabel}  ${categoryLabel}  ${chalk.dim(`(${r.matchedField})`)}`);
                 if (r.snippet) {
                     console.log(`  ${chalk.white(r.snippet)}`);
                 }
@@ -81,13 +59,73 @@ export function registerSearchCommand(program) {
         }
     });
 }
+async function searchInDir(dir, contentType, regex, keyword) {
+    let files;
+    try {
+        files = await fs.readdir(dir);
+    }
+    catch {
+        return [];
+    }
+    const mdFiles = files.filter(f => f.endsWith('.md'));
+    const results = [];
+    for (const file of mdFiles) {
+        const content = await fs.readFile(path.join(dir, file), 'utf-8');
+        const { data, content: body } = matter(content);
+        // Determine display name based on content type
+        let displayName;
+        if (contentType === 'term') {
+            displayName = data.term || path.basename(file, '.md');
+        }
+        else {
+            displayName = data.title || path.basename(file, '.md');
+        }
+        const category = data.category || '';
+        // Check frontmatter fields first
+        const frontmatterText = [
+            displayName,
+            category,
+            Array.isArray(data.tags) ? data.tags.join(' ') : '',
+            data.summary || '',
+        ].join(' ');
+        // Reset regex lastIndex before each use
+        regex.lastIndex = 0;
+        if (regex.test(frontmatterText)) {
+            results.push({
+                name: displayName,
+                contentType,
+                category,
+                snippet: data.summary || '',
+                matchedField: getMatchedFrontmatterField(keyword, data, contentType),
+            });
+            continue;
+        }
+        // Check body content line by line
+        const lines = body.split('\n');
+        for (const line of lines) {
+            regex.lastIndex = 0;
+            if (regex.test(line)) {
+                results.push({
+                    name: displayName,
+                    contentType,
+                    category,
+                    snippet: line.trim().slice(0, 100),
+                    matchedField: 'içerik',
+                });
+                break;
+            }
+        }
+    }
+    return results;
+}
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-function getMatchedFrontmatterField(keyword, data) {
+function getMatchedFrontmatterField(keyword, data, contentType) {
     const re = new RegExp(escapeRegex(keyword), 'i');
-    if (re.test(data.term || ''))
-        return 'terim';
+    const nameField = contentType === 'term' ? 'term' : 'title';
+    if (re.test(data[nameField] || ''))
+        return contentType === 'term' ? 'terim' : 'başlık';
     if (re.test(data.summary || ''))
         return 'özet';
     if (re.test(data.category || ''))
