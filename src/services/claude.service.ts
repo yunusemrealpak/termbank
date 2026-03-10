@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 import { Config } from '../utils/config.js';
 import { TermData, TermSummary } from '../utils/types.js';
 import { buildVaultContextBlock, VaultContext } from './vault.service.js';
@@ -233,6 +234,16 @@ ${systemPrompt}
   return parseVisualResponse(stdout);
 }
 
+function resolveCommand(command: string): string {
+  if (process.platform !== 'win32') return command;
+  // On Windows, global npm installs create .cmd wrappers.
+  // Appending .cmd avoids shell:true (which triggers DEP0190).
+  if (path.isAbsolute(command) || command.endsWith('.cmd') || command.endsWith('.exe')) {
+    return command;
+  }
+  return `${command}.cmd`;
+}
+
 function spawnClaude(
   command: string,
   args: string[],
@@ -244,11 +255,9 @@ function spawnClaude(
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
-    const proc = spawn(command, args, {
+    const proc = spawn(resolveCommand(command), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
-      // shell: true needed on Windows for .cmd resolution
-      ...(process.platform === 'win32' ? { shell: true } : {}),
     });
 
     let stdout = '';

@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 import { buildVaultContextBlock } from './vault.service.js';
 import { buildAttachmentContext } from './attachment.service.js';
 export function buildSystemPrompt(config, vaultContext) {
@@ -178,16 +179,24 @@ ${systemPrompt}
     const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
     return parseVisualResponse(stdout);
 }
+function resolveCommand(command) {
+    if (process.platform !== 'win32')
+        return command;
+    // On Windows, global npm installs create .cmd wrappers.
+    // Appending .cmd avoids shell:true (which triggers DEP0190).
+    if (path.isAbsolute(command) || command.endsWith('.cmd') || command.endsWith('.exe')) {
+        return command;
+    }
+    return `${command}.cmd`;
+}
 function spawnClaude(command, args, input, timeout) {
     return new Promise((resolve, reject) => {
         // Remove CLAUDECODE env var to allow spawning from within Claude Code sessions
         const env = { ...process.env };
         delete env.CLAUDECODE;
-        const proc = spawn(command, args, {
+        const proc = spawn(resolveCommand(command), args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             env,
-            // shell: true needed on Windows for .cmd resolution
-            ...(process.platform === 'win32' ? { shell: true } : {}),
         });
         let stdout = '';
         let stderr = '';
