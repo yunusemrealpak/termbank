@@ -54,17 +54,19 @@ export async function getCurrentBranch(dir: string): Promise<string> {
   return stdout;
 }
 
-/** Returns list of files that would be staged under terms/ */
-async function getStagedTermFiles(dir: string): Promise<string[]> {
+const VAULT_CONTENT_DIRS = ['terms/', 'notes/', 'visuals/'];
+
+/** Returns list of .md files staged under terms/, notes/, or visuals/ */
+async function getStagedContentFiles(dir: string): Promise<string[]> {
   const { stdout } = await runGit(dir, ['diff', '--cached', '--name-only']);
   return stdout
     .split('\n')
-    .filter(f => f.startsWith('terms/') && f.endsWith('.md'));
+    .filter(f => VAULT_CONTENT_DIRS.some(d => f.startsWith(d)) && f.endsWith('.md'));
 }
 
-/** Returns true if terms/ has any uncommitted (staged or unstaged) changes */
-async function hasTermChanges(dir: string): Promise<boolean> {
-  const { stdout } = await runGit(dir, ['status', '--porcelain', 'terms/']);
+/** Returns true if working tree has any uncommitted changes */
+async function hasAnyChanges(dir: string): Promise<boolean> {
+  const { stdout } = await runGit(dir, ['status', '--porcelain']);
   return stdout.length > 0;
 }
 
@@ -88,29 +90,38 @@ export async function syncVault(
   }
 
   if (!options.pullOnly) {
-    // Stage all term file changes (new + modified)
-    const hasChanges = await hasTermChanges(vaultPath);
+    // Stage everything in the vault (content + Obsidian metadata, plugins, etc.)
+    const hasChanges = await hasAnyChanges(vaultPath);
     if (hasChanges) {
-      await runGit(vaultPath, ['add', 'terms/']);
+      await runGit(vaultPath, ['add', '-A']);
 
-      const stagedFiles = await getStagedTermFiles(vaultPath);
-      if (stagedFiles.length > 0) {
-        const termNames = stagedFiles.map(f => path.basename(f, '.md'));
-        const message =
-          options.commitMessage ??
-          (termNames.length === 1
-            ? `Add term: ${termNames[0]}`
-            : `Add terms: ${termNames.join(', ')}`);
-
-        await runGit(vaultPath, ['commit', '-m', message]);
-        result.committed = true;
-        result.commitMessage = message;
-        result.newTerms = termNames;
+      const contentFiles = await getStagedContentFiles(vaultPath);
+      let message = options.commitMessage;
+      if (!message) {
+        if (contentFiles.length === 1) {
+          const [file] = contentFiles;
+          const dirLabel = VAULT_CONTENT_DIRS.find(d => file.startsWith(d))!.replace('/', '');
+          const name = path.basename(file, '.md');
+          message = `Add ${dirLabel.replace(/s$/, '')}: ${name}`;
+        } else if (contentFiles.length > 1) {
+          const counts = VAULT_CONTENT_DIRS.map(d => ({
+            label: d.replace('/', ''),
+            n: contentFiles.filter(f => f.startsWith(d)).length,
+          })).filter(c => c.n > 0);
+          message = `Sync vault: ${counts.map(c => `${c.n} ${c.label}`).join(', ')}`;
+        } else {
+          message = 'chore: sync vault';
+        }
       }
+
+      await runGit(vaultPath, ['commit', '-m', message]);
+      result.committed = true;
+      result.commitMessage = message;
+      result.newTerms = contentFiles.map(f => path.basename(f, '.md'));
     }
   }
 
-  // Pull with rebase — rebase keeps history clean for term-only repos
+  // Pull with rebase — everything is committed so no stash needed
   await runGit(vaultPath, ['pull', '--rebase', 'origin', branch]);
   result.pulled = true;
 
