@@ -7,10 +7,13 @@ import { getVaultContext, ensureVisualsDir, addRelation, buildVaultContextBlock,
 import { queryClaudeCLIForVisualTerm, queryClaudeCLIForVisualNote, } from '../services/claude.service.js';
 import { renderTermMarkdown } from '../templates/term.template.js';
 import { renderNote } from '../templates/note.template.js';
-import { slugify } from '../utils/slugify.js';
 import { Spinner } from '../utils/spinner.js';
 import { parseFileArgs } from '../utils/file-args.js';
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+// Use the title directly as filename, only stripping characters invalid on Windows/macOS.
+function toFilename(title) {
+    return title.replace(/[\\/:*?"<>|]/g, '').trim();
+}
 function listImagesInCwd() {
     return fs.readdirSync(process.cwd()).filter(f => {
         const ext = path.extname(f).toLowerCase();
@@ -165,7 +168,7 @@ export function registerVisualCommand(program) {
                     spinner.stop();
                     throw err;
                 }
-                slug = slugify(termData.term);
+                slug = toFilename(termData.term);
                 displayTitle = termData.term;
                 relatedTerms = termData.relatedTerms;
                 tags = termData.tags;
@@ -191,7 +194,7 @@ export function registerVisualCommand(program) {
                     spinner.stop();
                     throw err;
                 }
-                slug = slugify(noteData.title);
+                slug = toFilename(noteData.title);
                 displayTitle = noteData.title;
                 relatedTerms = noteData.relatedTerms;
                 tags = noteData.tags;

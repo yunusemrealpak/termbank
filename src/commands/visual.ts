@@ -28,6 +28,11 @@ import { parseFileArgs, AttachedFile } from '../utils/file-args.js';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
+// Use the title directly as filename, only stripping characters invalid on Windows/macOS.
+function toFilename(title: string): string {
+  return title.replace(/[\\/:*?"<>|]/g, '').trim();
+}
+
 function listImagesInCwd(): string[] {
   return fs.readdirSync(process.cwd()).filter(f => {
     const ext = path.extname(f).toLowerCase();
@@ -210,7 +215,7 @@ export function registerVisualCommand(program: Command): void {
             throw err;
           }
 
-          slug = slugify(termData.term);
+          slug = toFilename(termData.term);
           displayTitle = termData.term;
           relatedTerms = termData.relatedTerms;
           tags = termData.tags;
@@ -243,7 +248,7 @@ export function registerVisualCommand(program: Command): void {
             throw err;
           }
 
-          slug = slugify(noteData.title);
+          slug = toFilename(noteData.title);
           displayTitle = noteData.title;
           relatedTerms = noteData.relatedTerms;
           tags = noteData.tags;
