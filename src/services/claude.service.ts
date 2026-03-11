@@ -376,13 +376,21 @@ function spawnClaude(
 }
 
 function extractJSON(text: string): string {
-  // Try markdown code fences first
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) return fenceMatch[1].trim();
+  // Use lastIndexOf for the closing fence so that content fields containing
+  // code blocks (``` ... ```) inside the JSON string don't terminate early.
+  const fenceStart = text.indexOf('```');
+  if (fenceStart !== -1) {
+    const contentStart = text.indexOf('\n', fenceStart);
+    const fenceEnd = text.lastIndexOf('```');
+    if (contentStart !== -1 && fenceEnd > contentStart) {
+      return text.slice(contentStart + 1, fenceEnd).trim();
+    }
+  }
 
-  // Try raw JSON object
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) return jsonMatch[0];
+  // Fallback: find outermost { ... }
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first !== -1 && last > first) return text.slice(first, last + 1);
 
   return text.trim();
 }
