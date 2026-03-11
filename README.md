@@ -39,8 +39,10 @@ termbank add "CAP theorem" @paper.pdf
 
 Claude generates a structured term definition with explanation, examples, related terms, and common mistakes. The term is saved as a Markdown file in `terms/` and bidirectionally linked to related terms already in your vault.
 
+Before saving, termbank checks for similar terms already in your vault (by overlapping words) and prompts for confirmation if any are found — helping avoid near-duplicate entries.
+
 Options:
-- `-f, --force` — overwrite if term already exists
+- `-f, --force` — overwrite if term already exists (skips similarity check)
 
 ---
 
@@ -165,6 +167,54 @@ termbank config set git.autoSync true
 | `git.enabled` | `false` | Enable git sync |
 | `git.autoSync` | `false` | Auto-sync after each add |
 | `git.branch` | `main` | Remote branch to sync with |
+
+## MCP Server — Claude Code Integration
+
+termbank ships a built-in MCP server (`termbank-mcp`) that exposes your vault as tools inside a Claude Code session. This lets you save terms and notes, or query your vault, without leaving the conversation.
+
+### Setup
+
+Add the following to your Claude Code settings (`~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "termbank": {
+      "command": "termbank-mcp"
+    }
+  }
+}
+```
+
+> If installed locally (not globally), use the full path instead:
+> `"command": "node", "args": ["/path/to/termbank/dist/mcp/server.js"]`
+
+### Available tools
+
+| Tool | Description |
+|------|-------------|
+| `termbank_add_term` | Save a term with optional summary, category, tags, explanation, examples, and related terms |
+| `termbank_add_note` | Save a note with content, key points, and related terms |
+| `termbank_search` | Search across both terms and notes by keyword |
+| `termbank_list` | List all terms and notes in the vault |
+| `termbank_get_term` | Read the full content of a term by name |
+| `termbank_get_note` | Read the full content of a note by its id (filename without `.md`) |
+
+### Example workflow
+
+**Session A** — document an integration you just built:
+> "Bu Flavor entegrasyonunu termbank'a not olarak kaydet"
+
+Claude calls `termbank_add_note` → saved to `notes/Flavor Entegrasyonu.md`
+
+**Session B** — apply that knowledge to a new project:
+> "Termbank'taki Flavor entegrasyonu notunu oku ve bu projeye uygula"
+
+Claude calls `termbank_search("flavor")` → finds the note with its id → calls `termbank_get_note` → reads and applies the content.
+
+The MCP server reads your existing `~/.termbank.json` config, so vault path and all settings carry over automatically.
+
+---
 
 ## Vault Structure
 
