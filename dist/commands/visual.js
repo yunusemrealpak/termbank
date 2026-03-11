@@ -137,7 +137,7 @@ export function registerVisualCommand(program) {
             spinner.start();
             let visualData;
             try {
-                visualData = await queryClaudeCLIForVisual(title, vaultContextBlock, config, copiedAttachments);
+                visualData = await queryClaudeCLIForVisual(title, copiedFileNames, vaultContextBlock, config);
                 spinner.stop(chalk.green('✓ Claude yanıtı alındı'));
             }
             catch (err) {

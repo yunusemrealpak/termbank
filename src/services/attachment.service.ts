@@ -21,8 +21,11 @@ export function buildAttachmentContext(files: AttachedFile[]): {
       const content = fs.readFileSync(f.absolutePath, 'utf-8');
       textParts.push(`<file name="${f.name}">\n${content}\n</file>`);
     } else {
-      // image or document — pass via --file flag to Claude CLI
-      fileFlags.push('--file', f.absolutePath);
+      // Binary files (image/document) cannot be passed to Claude CLI outside
+      // an authenticated session. Skip with a warning.
+      console.warn(
+        `Uyarı: "${f.name}" binary dosyası (${f.type}) metin modunda işlenemiyor, atlanıyor.`,
+      );
     }
   }
 

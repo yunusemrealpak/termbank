@@ -172,9 +172,9 @@ export function registerVisualCommand(program: Command): void {
         try {
           visualData = await queryClaudeCLIForVisual(
             title,
+            copiedFileNames,
             vaultContextBlock,
             config,
-            copiedAttachments,
           );
           spinner.stop(chalk.green('✓ Claude yanıtı alındı'));
         } catch (err) {

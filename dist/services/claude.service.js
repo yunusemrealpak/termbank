@@ -1,6 +1,4 @@
 import { spawn } from 'child_process';
-import fs from 'fs';
-import path from 'path';
 import { buildVaultContextBlock } from './vault.service.js';
 import { buildAttachmentContext } from './attachment.service.js';
 export function buildSystemPrompt(config, vaultContext) {
@@ -145,15 +143,11 @@ ${systemPrompt}
     const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
     return parseNoteResponse(stdout);
 }
-const MIME_TYPES = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-};
-export async function queryClaudeCLIForVisual(title, vaultContext, config, attachments) {
-    const systemPrompt = `Sen bir görsel analiz asistanısın. Verilen görseli analiz edip yapılandırılmış bir companion doküman oluştur.
+// Claude CLI does not support vision analysis outside an authenticated session
+// (--file requires CLAUDE_CODE_SESSION_ACCESS_TOKEN). Instead, we generate the
+// companion .md from the title and image filename(s) via regular text mode.
+export async function queryClaudeCLIForVisual(title, imageFileNames, vaultContext, config) {
+    const systemPrompt = `Sen bir teknik dokümantasyon asistanısın. Verilen görsel başlığı ve dosya adından yola çıkarak yapılandırılmış bir companion doküman oluştur.
 Dil: ${config.language}
 
 JSON formatı:
@@ -161,84 +155,33 @@ JSON formatı:
   "title": "string",
   "summary": "Tek cümlelik özet",
   "tags": ["string"],
-  "analysis": "Görselin detaylı analizi (markdown formatında)",
+  "analysis": "Başlık ve dosya adından çıkarılabilecek bağlam ve notlar için placeholder (markdown formatında)",
   "detectedConcepts": ["string"],
   "relatedTerms": ["string"]
 }
 
 Kurallar:
 - Türkçe içerik üret
+- Başlık ve dosya adından anlamlı tag'ler, kavramlar ve ilişkili terimler çıkar
+- analysis alanına "Bu görselin analizini buraya ekleyin." gibi bir placeholder yaz; başlıktan çıkarılabilecek bağlamı da ekle
 - relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
-- detectedConcepts: Görselde tespit edilen yazılım/teknik kavramlar
+- detectedConcepts: Başlık ve dosya adından tahmin edilen yazılım/teknik kavramlar
 - Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
-    // Build content blocks: one image block per attachment, then the text prompt.
-    // Use --input-format stream-json so Claude receives full Anthropic API message format
-    // (base64 image content blocks). This avoids --file which requires session tokens.
-    const imageBlocks = attachments
-        .filter(a => a.type === 'image')
-        .map(a => {
-        const ext = path.extname(a.absolutePath).toLowerCase();
-        const mediaType = MIME_TYPES[ext] ?? 'image/png';
-        const data = fs.readFileSync(a.absolutePath).toString('base64');
-        return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
-    });
-    const textBlock = {
-        type: 'text',
-        text: `"${title}" başlıklı görsel için analiz yap ve companion doküman oluştur.`,
-    };
-    // stream-json input: single line with user message event
-    const streamInput = JSON.stringify({
-        type: 'user',
-        message: { role: 'user', content: [...imageBlocks, textBlock] },
-    });
+    const fullPrompt = `<system-instructions>
+${systemPrompt}
+</system-instructions>
+
+Görsel başlığı: "${title}"
+Dosya adları: ${imageFileNames.join(', ')}
+
+Bu görsel için companion doküman oluştur.`;
     const args = [
         '--print',
         '--max-turns', String(config.maxTurns),
-        '--output-format', 'stream-json',
-        '--input-format', 'stream-json',
-        '--system-prompt', systemPrompt,
+        '--output-format', 'text',
     ];
-    const stdout = await spawnClaude(config.claudePath, args, streamInput, config.timeout);
-    return parseVisualResponse(extractTextFromStreamJson(stdout));
-}
-function extractTextFromStreamJson(raw) {
-    // stream-json output is newline-delimited JSON events.
-    // The final {"type":"result"} event contains the full response in "result".
-    for (const line of raw.split('\n').reverse()) {
-        const trimmed = line.trim();
-        if (!trimmed)
-            continue;
-        try {
-            const event = JSON.parse(trimmed);
-            if (event.type === 'result' && typeof event.result === 'string') {
-                return event.result;
-            }
-        }
-        catch {
-            // skip non-JSON lines
-        }
-    }
-    // Fallback: collect all assistant text content blocks
-    const parts = [];
-    for (const line of raw.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed)
-            continue;
-        try {
-            const event = JSON.parse(trimmed);
-            if (event.type === 'assistant') {
-                const content = event.message?.content ?? [];
-                for (const block of content) {
-                    if (block.type === 'text')
-                        parts.push(block.text);
-                }
-            }
-        }
-        catch {
-            // skip
-        }
-    }
-    return parts.join('') || raw;
+    const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
+    return parseVisualResponse(stdout);
 }
 // Properly quote a single argument for cmd.exe on Windows.
 // Wraps in double-quotes and escapes backslashes/quotes per Windows rules.
@@ -295,6 +238,9 @@ function spawnClaude(command, args, input, timeout) {
                 reject(err);
             }
         });
+        // Suppress EPIPE/EOF on stdin — happens if the process exits before
+        // consuming all input. The 'close' handler already captures the exit code.
+        proc.stdin.on('error', () => { });
         proc.stdin.write(input);
         proc.stdin.end();
     });
