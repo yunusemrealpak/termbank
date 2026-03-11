@@ -187,6 +187,52 @@ export async function termExists(vaultPath: string, searchTerm: string): Promise
   return (await findTermFile(vaultPath, searchTerm)) !== null;
 }
 
+export interface SimilarTerm {
+  name: string;
+  category: string;
+  summary: string;
+}
+
+/**
+ * Returns terms that share any meaningful word with the query.
+ * Used to warn the user before adding a potentially duplicate term.
+ */
+export async function findSimilarTerms(vaultPath: string, query: string): Promise<SimilarTerm[]> {
+  const dir = path.join(vaultPath, 'terms');
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  if (words.length === 0) return [];
+
+  const results: SimilarTerm[] = [];
+
+  for (const file of files.filter(f => f.endsWith('.md'))) {
+    const raw = await fs.readFile(path.join(dir, file), 'utf-8');
+    const { data } = matter(raw);
+
+    const termName = ((data.term as string) || path.basename(file, '.md')).toLowerCase();
+    const tags: string[] = Array.isArray(data.tags) ? (data.tags as string[]) : [];
+
+    const nameMatch = words.some(w => termName.includes(w) || w.includes(termName));
+    const tagMatch = tags.some(t => words.some(w => t.toLowerCase().includes(w)));
+
+    if (nameMatch || tagMatch) {
+      results.push({
+        name: (data.term as string) || path.basename(file, '.md'),
+        category: (data.category as string) || '',
+        summary: (data.summary as string) || '',
+      });
+    }
+  }
+
+  return results;
+}
+
 export async function saveTerm(
   vaultPath: string,
   fileName: string,

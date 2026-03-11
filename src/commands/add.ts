@@ -8,6 +8,7 @@ import {
   saveTerm,
   ensureVaultDir,
   addRelation,
+  findSimilarTerms,
 } from '../services/vault.service.js';
 import { queryClaudeCLI } from '../services/claude.service.js';
 import { syncVault } from '../services/git.service.js';
@@ -59,6 +60,24 @@ export function registerAddCommand(program: Command): void {
           console.error(chalk.yellow('Üzerine yazmak için --force kullanın:'));
           console.error(chalk.yellow(`  termbank add "${term}" --force`));
           process.exit(1);
+        }
+
+        // Similarity check — warn if vault has terms with overlapping words
+        if (!options.force) {
+          const similar = await findSimilarTerms(config.vault, term);
+          if (similar.length > 0) {
+            console.log(chalk.yellow('\nBenzer terimler bulundu:\n'));
+            for (const s of similar) {
+              console.log(`  ${chalk.cyan(s.name)}  ${chalk.dim(`[${s.category}]`)}`);
+              if (s.summary) console.log(`  ${chalk.dim(s.summary)}`);
+              console.log();
+            }
+            const proceed = await askConfirmation('Bunlardan farklı bir terim mi eklemek istiyorsunuz? [E/h] ');
+            if (!proceed) {
+              console.log(chalk.dim('İptal edildi.'));
+              process.exit(0);
+            }
+          }
         }
 
         await ensureVaultDir(config.vault);
@@ -163,6 +182,17 @@ function promptForTerm(): Promise<string> {
     rl.question(chalk.blue('Terim: '), answer => {
       rl.close();
       resolve(answer.trim());
+    });
+  });
+}
+
+function askConfirmation(question: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(chalk.yellow(question), answer => {
+      rl.close();
+      const normalized = answer.trim().toLowerCase();
+      resolve(normalized === '' || normalized === 'e' || normalized === 'evet');
     });
   });
 }

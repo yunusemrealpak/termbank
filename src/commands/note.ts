@@ -12,7 +12,7 @@ import {
 } from '../services/vault.service.js';
 import { queryClaudeCLIForNote } from '../services/claude.service.js';
 import { renderNote } from '../templates/note.template.js';
-import { slugify } from '../utils/slugify.js';
+import { safeFilename } from '../utils/slugify.js';
 import { Spinner } from '../utils/spinner.js';
 import { parseFileArgs } from '../utils/file-args.js';
 
@@ -48,7 +48,7 @@ export function registerNoteCommand(program: Command): void {
         }
 
         const attachments = parsed.files;
-        const slug = slugify(title);
+        const slug = safeFilename(title);
 
         await ensureNotesDir(config.vault);
 
