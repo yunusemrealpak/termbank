@@ -7,4 +7,4 @@ export declare function buildSystemPrompt(config: Config, vaultContext: TermSumm
 export declare function queryClaudeCLI(term: string, config: Config, vaultContext: TermSummary[], attachments?: AttachedFile[]): Promise<TermData>;
 export declare function queryClaudeCLIForUpdate(termName: string, existingContent: string, config: Config, vaultContext: TermSummary[], attachments?: AttachedFile[]): Promise<TermData>;
 export declare function queryClaudeCLIForNote(title: string, vaultContext: string, config: Config, attachments?: AttachedFile[]): Promise<NoteResponse>;
-export declare function queryClaudeCLIForVisual(title: string, imageFileNames: string[], vaultContext: string, config: Config): Promise<VisualResponse>;
+export declare function queryClaudeCLIForVisual(title: string, imageAbsolutePaths: string[], imageFileNames: string[], vaultContext: string, config: Config): Promise<VisualResponse>;

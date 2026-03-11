@@ -172,6 +172,7 @@ export function registerVisualCommand(program: Command): void {
         try {
           visualData = await queryClaudeCLIForVisual(
             title,
+            copiedAttachments.map(a => a.absolutePath),
             copiedFileNames,
             vaultContextBlock,
             config,

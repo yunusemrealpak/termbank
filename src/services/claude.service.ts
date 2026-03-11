@@ -188,16 +188,17 @@ ${systemPrompt}
   return parseNoteResponse(stdout);
 }
 
-// Claude CLI does not support vision analysis outside an authenticated session
-// (--file requires CLAUDE_CODE_SESSION_ACCESS_TOKEN). Instead, we generate the
-// companion .md from the title and image filename(s) via regular text mode.
+// Pass image paths in the prompt and allow Claude's Read tool to load them.
+// This is the supported non-interactive approach: Claude reads image files
+// via its built-in Read tool when given file paths in the prompt.
 export async function queryClaudeCLIForVisual(
   title: string,
+  imageAbsolutePaths: string[],
   imageFileNames: string[],
   vaultContext: string,
   config: Config,
 ): Promise<VisualResponse> {
-  const systemPrompt = `Sen bir teknik dokümantasyon asistanısın. Verilen görsel başlığı ve dosya adından yola çıkarak yapılandırılmış bir companion doküman oluştur.
+  const systemPrompt = `Sen bir görsel analiz asistanısın. Verilen görsel dosyalarını oku ve analiz ederek yapılandırılmış bir companion doküman oluştur.
 Dil: ${config.language}
 
 JSON formatı:
@@ -205,32 +206,34 @@ JSON formatı:
   "title": "string",
   "summary": "Tek cümlelik özet",
   "tags": ["string"],
-  "analysis": "Başlık ve dosya adından çıkarılabilecek bağlam ve notlar için placeholder (markdown formatında)",
+  "analysis": "Görselin detaylı analizi (markdown formatında)",
   "detectedConcepts": ["string"],
   "relatedTerms": ["string"]
 }
 
 Kurallar:
 - Türkçe içerik üret
-- Başlık ve dosya adından anlamlı tag'ler, kavramlar ve ilişkili terimler çıkar
-- analysis alanına "Bu görselin analizini buraya ekleyin." gibi bir placeholder yaz; başlıktan çıkarılabilecek bağlamı da ekle
+- Verilen dosya yollarındaki görselleri oku ve içeriklerini analiz et
 - relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
-- detectedConcepts: Başlık ve dosya adından tahmin edilen yazılım/teknik kavramlar
+- detectedConcepts: Görselde tespit edilen yazılım/teknik kavramlar
 - Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
 
+  const pathList = imageAbsolutePaths.map(p => `- ${p}`).join('\n');
   const fullPrompt = `<system-instructions>
 ${systemPrompt}
 </system-instructions>
 
-Görsel başlığı: "${title}"
-Dosya adları: ${imageFileNames.join(', ')}
+Başlık: "${title}"
+Dosya adları (companion .md için): ${imageFileNames.join(', ')}
 
-Bu görsel için companion doküman oluştur.`;
+Aşağıdaki görsel dosyalarını oku ve analiz et:
+${pathList}`;
 
   const args = [
     '--print',
     '--max-turns', String(config.maxTurns),
     '--output-format', 'text',
+    '--allowedTools', 'Read',
   ];
 
   const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
