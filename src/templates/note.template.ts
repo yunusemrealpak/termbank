@@ -14,6 +14,7 @@ export function renderNote(
   existingVaultSlugs: string[],
   sources: string[],
   slug: string,
+  imageFiles?: string[],
 ): string {
   const now = new Date().toISOString();
   const slugSet = new Set(existingVaultSlugs.map(s => s.toLowerCase()));
@@ -33,6 +34,10 @@ export function renderNote(
     updated: now,
   };
 
+  if (imageFiles && imageFiles.length > 0) {
+    frontmatter.imageFiles = imageFiles;
+  }
+
   if (sources.length > 0) {
     frontmatter.sources = sources;
   }
@@ -41,6 +46,12 @@ export function renderNote(
 
   // Title
   sections.push(`# ${response.title}\n`);
+
+  // Image embeds (right after title, before summary)
+  if (imageFiles && imageFiles.length > 0) {
+    imageFiles.forEach(f => sections.push(`![[${f}]]`));
+    sections.push('');
+  }
 
   // Summary blockquote
   sections.push(`> ${response.summary}\n`);

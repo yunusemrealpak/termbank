@@ -1,2 +1,2 @@
 import { TermData, TermSummary } from '../utils/types.js';
-export declare function renderTermMarkdown(termData: TermData, vaultTerms: TermSummary[], attachmentSources?: string[]): string;
+export declare function renderTermMarkdown(termData: TermData, vaultTerms: TermSummary[], attachmentSources?: string[], imageFiles?: string[]): string;

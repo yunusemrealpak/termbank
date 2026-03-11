@@ -78,33 +78,10 @@ async function readNoteSummaries(vaultPath, maxItems) {
     }
     return notes;
 }
-async function readVisualSummaries(vaultPath, maxItems) {
-    const visualsDir = path.join(vaultPath, 'visuals');
-    let files;
-    try {
-        files = await fs.readdir(visualsDir);
-    }
-    catch {
-        return [];
-    }
-    const mdFiles = files.filter(f => f.endsWith('.md')).slice(0, maxItems);
-    const visuals = [];
-    for (const file of mdFiles) {
-        try {
-            const content = await fs.readFile(path.join(visualsDir, file), 'utf-8');
-            const { data } = matter(content);
-            visuals.push({
-                slug: path.basename(file, '.md'),
-                title: data.title || path.basename(file, '.md'),
-                summary: data.summary || '',
-                tags: data.tags || [],
-            });
-        }
-        catch {
-            // Skip unreadable files
-        }
-    }
-    return visuals;
+async function readVisualSummaries(vaultPath, _maxItems) {
+    // vault/visuals/ now contains only image assets (no .md files)
+    // Return empty array — visuals are companion docs inside terms/ or notes/
+    return [];
 }
 export function buildVaultContextBlock(context) {
     const parts = [];
@@ -119,12 +96,6 @@ export function buildVaultContextBlock(context) {
             .map(n => `- slug: "${n.slug}", title: "${n.title}", summary: "${n.summary}"`)
             .join('\n');
         parts.push(`=== NOTES ===\n${list}`);
-    }
-    if (context.visuals.length > 0) {
-        const list = context.visuals
-            .map(v => `- slug: "${v.slug}", title: "${v.title}", summary: "${v.summary}"`)
-            .join('\n');
-        parts.push(`=== VISUALS ===\n${list}`);
     }
     if (parts.length === 0)
         return '';
@@ -142,8 +113,7 @@ export function buildVaultContextString(context) {
 export function getAllSlugs(context) {
     const termSlugs = context.terms.map(t => slugify(t.term));
     const noteSlugs = context.notes.map(n => n.slug);
-    const visualSlugs = context.visuals.map(v => v.slug);
-    return [...termSlugs, ...noteSlugs, ...visualSlugs];
+    return [...termSlugs, ...noteSlugs];
 }
 /**
  * Finds a term's actual filename (without .md) via case-insensitive lookup.

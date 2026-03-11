@@ -1,5 +1,5 @@
 import matter from 'gray-matter';
-export function renderNote(response, existingVaultSlugs, sources, slug) {
+export function renderNote(response, existingVaultSlugs, sources, slug, imageFiles) {
     const now = new Date().toISOString();
     const slugSet = new Set(existingVaultSlugs.map(s => s.toLowerCase()));
     // Filter relatedTerms to only those that exist in vault
@@ -13,12 +13,20 @@ export function renderNote(response, existingVaultSlugs, sources, slug) {
         created: now,
         updated: now,
     };
+    if (imageFiles && imageFiles.length > 0) {
+        frontmatter.imageFiles = imageFiles;
+    }
     if (sources.length > 0) {
         frontmatter.sources = sources;
     }
     const sections = [];
     // Title
     sections.push(`# ${response.title}\n`);
+    // Image embeds (right after title, before summary)
+    if (imageFiles && imageFiles.length > 0) {
+        imageFiles.forEach(f => sections.push(`![[${f}]]`));
+        sections.push('');
+    }
     // Summary blockquote
     sections.push(`> ${response.summary}\n`);
     // Content

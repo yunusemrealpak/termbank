@@ -5,7 +5,6 @@ import { buildVaultContextBlock, VaultContext } from './vault.service.js';
 import { AttachedFile } from '../utils/file-args.js';
 import { buildAttachmentContext } from './attachment.service.js';
 import { NoteResponse } from '../templates/note.template.js';
-import { VisualResponse } from '../templates/visual.template.js';
 
 export function buildSystemPrompt(config: Config, vaultContext: TermSummary[]): string {
   const vaultBlock = config.vaultContext.enabled
@@ -188,45 +187,50 @@ ${systemPrompt}
   return parseNoteResponse(stdout);
 }
 
-// Pass image paths in the prompt and allow Claude's Read tool to load them.
-// This is the supported non-interactive approach: Claude reads image files
-// via its built-in Read tool when given file paths in the prompt.
-export async function queryClaudeCLIForVisual(
-  title: string,
+// Görsel içeren TERM üretir
+export async function queryClaudeCLIForVisualTerm(
+  title: string | null,
   imageAbsolutePaths: string[],
   imageFileNames: string[],
   vaultContext: string,
   config: Config,
-): Promise<VisualResponse> {
-  const systemPrompt = `Sen bir görsel analiz asistanısın. Verilen görsel dosyalarını oku ve analiz ederek yapılandırılmış bir companion doküman oluştur.
-Dil: ${config.language}
+): Promise<TermData> {
+  const titleInstruction = title === null
+    ? '\nEğer başlık verilmemişse, görselden uygun bir başlık çıkar ve JSON\'daki "term" alanına yaz.'
+    : '';
+
+  const systemPrompt = `Sen bir terim uzmanısın. Verilen görselleri oku ve analiz ederek, görselin içeriğini açıklayan yapılandırılmış bir terim belgesi oluştur.
+Dil: ${config.language}${titleInstruction}
 
 JSON formatı:
 {
-  "title": "string",
-  "summary": "Tek cümlelik özet",
+  "term": "string",
+  "turkishEquivalent": "string",
+  "category": "kavram | pattern | anti-pattern | mimari | araç | metodoloji | teori | prensip",
   "tags": ["string"],
-  "analysis": "Görselin detaylı analizi (markdown formatında)",
-  "detectedConcepts": ["string"],
-  "relatedTerms": ["string"]
+  "summary": "Tek cümlelik özet",
+  "explanation": "2-3 paragraf detaylı açıklama",
+  "examples": [{ "title": "string", "code": "string (opsiyonel)", "description": "string" }],
+  "relatedTerms": ["string"],
+  "commonMistakes": ["string"],
+  "sources": ["string"]
 }
 
 Kurallar:
-- Türkçe içerik üret
 - Verilen dosya yollarındaki görselleri oku ve içeriklerini analiz et
+- tags alanına terimin ait olduğu alanı/domain'i de ekle (örn: "software", "psychology", "physics")
 - relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
-- detectedConcepts: Görselde tespit edilen yazılım/teknik kavramlar
 - Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
 
   const pathList = imageAbsolutePaths.map(p => `- ${p}`).join('\n');
+  const titleLine = title ? `Başlık: "${title}"\n` : '';
   const fullPrompt = `<system-instructions>
 ${systemPrompt}
 </system-instructions>
 
-Başlık: "${title}"
-Dosya adları (companion .md için): ${imageFileNames.join(', ')}
+${titleLine}Dosya adları: ${imageFileNames.join(', ')}
 
-Aşağıdaki görsel dosyalarını oku ve analiz et:
+Aşağıdaki görselleri oku:
 ${pathList}`;
 
   const args = [
@@ -237,7 +241,61 @@ ${pathList}`;
   ];
 
   const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
-  return parseVisualResponse(stdout);
+  return parseClaudeResponse(stdout);
+}
+
+// Görsel içeren NOTE üretir
+export async function queryClaudeCLIForVisualNote(
+  title: string | null,
+  imageAbsolutePaths: string[],
+  imageFileNames: string[],
+  vaultContext: string,
+  config: Config,
+): Promise<NoteResponse> {
+  const titleInstruction = title === null
+    ? '\nEğer başlık verilmemişse, görselden uygun bir başlık çıkar ve JSON\'daki "title" alanına yaz.'
+    : '';
+
+  const systemPrompt = `Sen bir teknik not asistanısın. Verilen görselleri oku ve analiz ederek, görselin içeriği hakkında yapılandırılmış bir geliştirici notu oluştur.
+Dil: ${config.language}${titleInstruction}
+
+JSON formatı:
+{
+  "title": "string",
+  "summary": "Tek cümlelik özet",
+  "tags": ["string"],
+  "content": "Detaylı içerik (markdown formatında, kod blokları dahil)",
+  "keyPoints": ["string"],
+  "relatedTerms": ["string"]
+}
+
+Kurallar:
+- Verilen dosya yollarındaki görselleri oku ve içeriklerini analiz et
+- Türkçe içerik üret
+- relatedTerms: Eğer vault'ta mevcut içerikler verilmişse, SADECE o listedeki slug'ları kullan. Listede yoksa boş bırak.
+- content alanı markdown formatında olabilir (başlık, liste, kod bloğu vb.)
+- Sadece JSON döndür, başka bir şey yazma.${vaultContext}`;
+
+  const pathList = imageAbsolutePaths.map(p => `- ${p}`).join('\n');
+  const titleLine = title ? `Başlık: "${title}"\n` : '';
+  const fullPrompt = `<system-instructions>
+${systemPrompt}
+</system-instructions>
+
+${titleLine}Dosya adları: ${imageFileNames.join(', ')}
+
+Aşağıdaki görselleri oku:
+${pathList}`;
+
+  const args = [
+    '--print',
+    '--max-turns', String(config.maxTurns),
+    '--output-format', 'text',
+    '--allowedTools', 'Read',
+  ];
+
+  const stdout = await spawnClaude(config.claudePath, args, fullPrompt, config.timeout);
+  return parseNoteResponse(stdout);
 }
 
 // Properly quote a single argument for cmd.exe on Windows.
@@ -389,30 +447,3 @@ function parseNoteResponse(raw: string): NoteResponse {
   }
 }
 
-function parseVisualResponse(raw: string): VisualResponse {
-  const jsonStr = extractJSON(raw);
-
-  try {
-    const data = JSON.parse(jsonStr);
-
-    if (!data.title || typeof data.title !== 'string') {
-      throw new Error('JSON yanıtında "title" alanı eksik veya geçersiz');
-    }
-
-    return {
-      title: data.title,
-      summary: data.summary || '',
-      tags: Array.isArray(data.tags) ? data.tags : [],
-      analysis: data.analysis || '',
-      detectedConcepts: Array.isArray(data.detectedConcepts) ? data.detectedConcepts : [],
-      relatedTerms: Array.isArray(data.relatedTerms) ? data.relatedTerms : [],
-    };
-  } catch (err) {
-    if (err instanceof SyntaxError) {
-      throw new Error(
-        `Claude yanıtı geçerli JSON değil. Ham yanıt:\n${raw.slice(0, 500)}`
-      );
-    }
-    throw err;
-  }
-}

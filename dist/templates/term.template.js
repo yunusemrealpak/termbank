@@ -1,5 +1,5 @@
 import matter from 'gray-matter';
-export function renderTermMarkdown(termData, vaultTerms, attachmentSources) {
+export function renderTermMarkdown(termData, vaultTerms, attachmentSources, imageFiles) {
     const now = new Date().toISOString();
     const vaultTermNames = new Set(vaultTerms.map(t => t.term.toLowerCase()));
     const frontmatter = {
@@ -13,12 +13,20 @@ export function renderTermMarkdown(termData, vaultTerms, attachmentSources) {
         confidence: 'learning',
         source: 'claude-cli',
     };
+    if (imageFiles && imageFiles.length > 0) {
+        frontmatter.imageFiles = imageFiles;
+    }
     if (attachmentSources && attachmentSources.length > 0) {
         frontmatter.sources = attachmentSources;
     }
     const sections = [];
     // Title
     sections.push(`# ${termData.term}\n`);
+    // Image embeds (right after title, before summary)
+    if (imageFiles && imageFiles.length > 0) {
+        imageFiles.forEach(f => sections.push(`![[${f}]]`));
+        sections.push('');
+    }
     // Summary blockquote
     sections.push(`> ${termData.summary}\n`);
     // Turkish equivalent

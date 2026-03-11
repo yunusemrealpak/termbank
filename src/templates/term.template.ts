@@ -5,6 +5,7 @@ export function renderTermMarkdown(
   termData: TermData,
   vaultTerms: TermSummary[],
   attachmentSources?: string[],
+  imageFiles?: string[],
 ): string {
   const now = new Date().toISOString();
   const vaultTermNames = new Set(vaultTerms.map(t => t.term.toLowerCase()));
@@ -21,6 +22,10 @@ export function renderTermMarkdown(
     source: 'claude-cli',
   };
 
+  if (imageFiles && imageFiles.length > 0) {
+    frontmatter.imageFiles = imageFiles;
+  }
+
   if (attachmentSources && attachmentSources.length > 0) {
     frontmatter.sources = attachmentSources;
   }
@@ -29,6 +34,12 @@ export function renderTermMarkdown(
 
   // Title
   sections.push(`# ${termData.term}\n`);
+
+  // Image embeds (right after title, before summary)
+  if (imageFiles && imageFiles.length > 0) {
+    imageFiles.forEach(f => sections.push(`![[${f}]]`));
+    sections.push('');
+  }
 
   // Summary blockquote
   sections.push(`> ${termData.summary}\n`);

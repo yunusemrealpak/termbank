@@ -6,4 +6,4 @@ export interface NoteResponse {
     keyPoints: string[];
     relatedTerms: string[];
 }
-export declare function renderNote(response: NoteResponse, existingVaultSlugs: string[], sources: string[], slug: string): string;
+export declare function renderNote(response: NoteResponse, existingVaultSlugs: string[], sources: string[], slug: string, imageFiles?: string[]): string;
