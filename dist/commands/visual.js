@@ -83,8 +83,12 @@ export function registerVisualCommand(program) {
                 console.error(chalk.red(`Hata: ${err.message}`));
                 process.exit(1);
             }
-            // Title: --title flag > parsed title > null (Claude will infer)
-            const title = options.title ?? parsed.title ?? null;
+            // Title: --title flag > parsed title > interactive prompt > null (Claude will infer)
+            let title = options.title ?? parsed.title ?? null;
+            if (title === null) {
+                const input = await promptLine(chalk.bold('Başlık') + chalk.dim(' (boş bırakırsan Claude görselden çıkarır): '));
+                title = input || null;
+            }
             let attachments = parsed.files;
             if (attachments.length === 0) {
                 // Interactive file picker

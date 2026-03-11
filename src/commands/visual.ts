@@ -109,8 +109,14 @@ export function registerVisualCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Title: --title flag > parsed title > null (Claude will infer)
-        const title: string | null = options.title ?? parsed.title ?? null;
+        // Title: --title flag > parsed title > interactive prompt > null (Claude will infer)
+        let title: string | null = options.title ?? parsed.title ?? null;
+        if (title === null) {
+          const input = await promptLine(
+            chalk.bold('Başlık') + chalk.dim(' (boş bırakırsan Claude görselden çıkarır): '),
+          );
+          title = input || null;
+        }
 
         let attachments = parsed.files;
 
