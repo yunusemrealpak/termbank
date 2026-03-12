@@ -28,7 +28,7 @@ import type { NoteResponse } from '../templates/note.template.js';
 
 const server = new McpServer({
   name: 'termbank',
-  version: '0.1.3',
+  version: '0.1.5',
 });
 
 // ── add_term ──────────────────────────────────────────────────────────────────
