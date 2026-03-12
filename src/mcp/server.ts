@@ -3,6 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import matter from 'gray-matter';
 import { loadConfig } from '../services/config.service.js';
 import {
   termExists,
@@ -13,6 +14,7 @@ import {
   ensureNotesDir,
   getVaultContext,
   findSimilarTerms,
+  findTermFile,
   readTerm,
   readNote,
   addRelation,
@@ -380,6 +382,182 @@ server.tool(
     }
 
     return { content: [{ type: 'text', text: content }] };
+  },
+);
+
+// ── update_term ───────────────────────────────────────────────────────────────
+
+/**
+ * Replaces the content of a named "## Heading" section in a markdown body.
+ * If the section doesn't exist it is appended.
+ */
+function replaceSection(body: string, heading: string, newContent: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(## ${escaped}\\n)([\\s\\S]*?)(?=\\n## |$)`);
+  if (pattern.test(body)) {
+    return body.replace(pattern, `$1\n${newContent}\n`);
+  }
+  return `${body}\n## ${heading}\n\n${newContent}\n`;
+}
+
+server.tool(
+  'termbank_update_term',
+  'Update an existing term in the vault. Only the fields you provide will be changed; everything else is preserved. To replace full content (explanation, examples) use termbank_add_term with force: true instead.',
+  {
+    term: z.string().describe('Term name to update (must already exist)'),
+    summary: z.string().optional().describe('New one-sentence summary'),
+    category: z.string().optional().describe('New category'),
+    tags: z.array(z.string()).optional().describe('New tags (replaces existing)'),
+    explanation: z.string().optional().describe('New explanation text for the Açıklama section'),
+    turkish_equivalent: z.string().optional().describe('New Turkish equivalent'),
+    related_terms: z.array(z.string()).optional().describe('New related terms (replaces existing)'),
+    confidence: z
+      .enum(['learning', 'familiar', 'mastered'])
+      .optional()
+      .describe('Update mastery level'),
+  },
+  async (args) => {
+    const config = await loadConfig();
+
+    if (!config.vault) {
+      return {
+        content: [{ type: 'text', text: 'Vault path is not configured.' }],
+        isError: true,
+      };
+    }
+
+    const existing = await readTerm(config.vault, args.term);
+    if (!existing) {
+      return {
+        content: [{ type: 'text', text: `"${args.term}" not found in vault.` }],
+        isError: true,
+      };
+    }
+
+    const parsed = matter(existing);
+
+    // Patch frontmatter — only provided fields
+    if (args.summary !== undefined) parsed.data.summary = args.summary;
+    if (args.category !== undefined) parsed.data.category = args.category;
+    if (args.tags !== undefined) parsed.data.tags = args.tags;
+    if (args.related_terms !== undefined) parsed.data.relatedTerms = args.related_terms;
+    if (args.confidence !== undefined) parsed.data.confidence = args.confidence;
+    parsed.data.updated = new Date().toISOString();
+
+    // Patch body sections — only provided fields
+    let body = parsed.content;
+    if (args.explanation !== undefined) body = replaceSection(body, 'Açıklama', args.explanation);
+    if (args.turkish_equivalent !== undefined)
+      body = replaceSection(body, 'Türkçe Karşılık', args.turkish_equivalent);
+    if (args.related_terms !== undefined) {
+      const vaultCtx = await getVaultContext(config.vault, config.vaultContext.maxTerms);
+      const vaultTermNames = new Set(vaultCtx.terms.map(t => t.term.toLowerCase()));
+      const bullets = args.related_terms
+        .map(rt => `- ${vaultTermNames.has(rt.toLowerCase()) ? `[[${rt}]]` : rt}`)
+        .join('\n');
+      body = replaceSection(body, 'İlişkili Terimler', bullets);
+    }
+
+    const finalContent = matter.stringify(body, parsed.data);
+    const fileName = (await findTermFile(config.vault, args.term)) ?? safeFilename(args.term);
+    await saveTerm(config.vault, fileName, finalContent);
+
+    const updated = Object.keys(args)
+      .filter(k => k !== 'term' && args[k as keyof typeof args] !== undefined)
+      .join(', ');
+
+    return {
+      content: [{ type: 'text', text: `✓ Updated terms/${fileName}.md\nChanged fields: ${updated}` }],
+    };
+  },
+);
+
+// ── update_note ───────────────────────────────────────────────────────────────
+
+server.tool(
+  'termbank_update_note',
+  'Update an existing note in the vault. Only the fields you provide will be changed; everything else is preserved.',
+  {
+    slug: z.string().describe('Note id/filename without .md (as shown in termbank_list or termbank_search)'),
+    title: z.string().optional().describe('New title'),
+    summary: z.string().optional().describe('New one-sentence summary'),
+    tags: z.array(z.string()).optional().describe('New tags (replaces existing)'),
+    content: z.string().optional().describe('New content for the İçerik section'),
+    key_points: z.array(z.string()).optional().describe('New key points (replaces existing)'),
+    related_terms: z.array(z.string()).optional().describe('New related terms (replaces existing)'),
+  },
+  async (args) => {
+    const config = await loadConfig();
+
+    if (!config.vault) {
+      return {
+        content: [{ type: 'text', text: 'Vault path is not configured.' }],
+        isError: true,
+      };
+    }
+
+    // Resolve slug → actual filename via context if needed
+    let resolvedSlug = args.slug;
+    let existing: string;
+    try {
+      existing = await readNote(config.vault, resolvedSlug);
+    } catch {
+      const ctx = await getVaultContext(config.vault, 500);
+      const match = ctx.notes.find(
+        n =>
+          n.slug.toLowerCase() === args.slug.toLowerCase() ||
+          n.title.toLowerCase() === args.slug.toLowerCase(),
+      );
+      if (!match) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Note "${args.slug}" not found. Use termbank_list to find the correct id.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      resolvedSlug = match.slug;
+      existing = await readNote(config.vault, resolvedSlug);
+    }
+
+    const parsed = matter(existing);
+
+    // Patch frontmatter
+    if (args.title !== undefined) parsed.data.title = args.title;
+    if (args.summary !== undefined) parsed.data.summary = args.summary;
+    if (args.tags !== undefined) parsed.data.tags = args.tags;
+    if (args.related_terms !== undefined) parsed.data.relatedTerms = args.related_terms;
+    parsed.data.updated = new Date().toISOString();
+
+    // Patch body sections
+    let body = parsed.content;
+    if (args.content !== undefined) body = replaceSection(body, 'İçerik', args.content);
+    if (args.key_points !== undefined) {
+      const bullets = args.key_points.map(kp => `- ${kp}`).join('\n');
+      body = replaceSection(body, 'Önemli Noktalar', bullets);
+    }
+    if (args.related_terms !== undefined) {
+      const allSlugs = getAllSlugs(await getVaultContext(config.vault, 500));
+      const slugSet = new Set(allSlugs.map(s => s.toLowerCase()));
+      const bullets = args.related_terms
+        .map(rt => `- ${slugSet.has(rt.toLowerCase()) ? `[[${rt}|${rt}]]` : rt}`)
+        .join('\n');
+      body = replaceSection(body, 'İlişkili Terimler', bullets);
+    }
+
+    const finalContent = matter.stringify(body, parsed.data);
+    await saveNote(config.vault, resolvedSlug, finalContent);
+
+    const updated = Object.keys(args)
+      .filter(k => k !== 'slug' && args[k as keyof typeof args] !== undefined)
+      .join(', ');
+
+    return {
+      content: [{ type: 'text', text: `✓ Updated notes/${resolvedSlug}.md\nChanged fields: ${updated}` }],
+    };
   },
 );
 

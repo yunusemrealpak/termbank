@@ -193,8 +193,10 @@ Add the following to your Claude Code settings (`~/.claude/settings.json`):
 
 | Tool | Description |
 |------|-------------|
-| `termbank_add_term` | Save a term with optional summary, category, tags, explanation, examples, and related terms |
-| `termbank_add_note` | Save a note with content, key points, and related terms |
+| `termbank_add_term` | Save a new term with optional summary, category, tags, explanation, examples, and related terms |
+| `termbank_add_note` | Save a new note with content, key points, and related terms |
+| `termbank_update_term` | Update specific fields of an existing term without touching the rest |
+| `termbank_update_note` | Update specific fields of an existing note without touching the rest |
 | `termbank_search` | Search across both terms and notes by keyword |
 | `termbank_list` | List all terms and notes in the vault |
 | `termbank_get_term` | Read the full content of a term by name |
