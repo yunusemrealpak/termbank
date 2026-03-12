@@ -180,14 +180,14 @@ Add the following to your Claude Code settings (`~/.claude/settings.json`):
 {
   "mcpServers": {
     "termbank": {
-      "command": "termbank-mcp"
+      "command": "npx",
+      "args": ["termbank-mcp"]
     }
   }
 }
 ```
 
-> If installed locally (not globally), use the full path instead:
-> `"command": "node", "args": ["/path/to/termbank/dist/mcp/server.js"]`
+`npx` always pulls the latest published version and works without a global install. If you prefer a global install (`npm install -g termbank`), you can use `"command": "termbank-mcp"` with no `args`.
 
 ### Available tools
 
